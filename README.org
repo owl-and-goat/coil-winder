@@ -1,0 +1,13 @@
+#+title: a cnc coil winder
+
+this is a work in progress
+
+* photos
+
+here's how it looks in cad:
+
+[[file:./images/cad.png]]
+
+and here's how it looks in real life:
+
+[[file:./images/real.jpg]]
