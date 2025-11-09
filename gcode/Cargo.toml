@@ -1,0 +1,9 @@
+[package]
+name = "gcode"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+fixed = "1.29.0"
+heapless = "0.9.1"
+nom = { version = "8.0.0", default-features = false }
