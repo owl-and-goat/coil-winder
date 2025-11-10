@@ -1,14 +1,17 @@
 #![allow(dead_code)] // FIXME
 
+use core::time::Duration;
+
 use heapless::Vec;
 use nom::{
     branch::alt,
-    bytes::streaming::tag,
+    bytes::{complete::take_while1, streaming::tag},
     character::{complete::multispace1, streaming::char},
-    combinator::opt,
+    combinator::{map, map_res, opt},
     error::ErrorKind,
     number::complete::recognize_float,
-    IResult, Parser,
+    sequence::preceded,
+    AsChar, IResult, Parser,
 };
 
 use crate::ast::{Command, UCoord, UPos};
@@ -96,6 +99,29 @@ pub fn non_empty_upos_g_command<const AXES: usize>(
     }
 }
 
+pub fn dwell<const AXES: usize>(i: &[u8]) -> IResult<&[u8], Command<AXES>> {
+    let (i, _) = g("4")(i)?;
+    let (i, _) = multispace1(i)?;
+    let (i, dur) = alt((
+        preceded(
+            char('S'),
+            map(
+                map_res(take_while1(AsChar::is_dec_digit), u64::from_ascii),
+                Duration::from_secs,
+            ),
+        ),
+        preceded(
+            char('P'),
+            map(
+                map_res(take_while1(AsChar::is_dec_digit), u64::from_ascii),
+                Duration::from_millis,
+            ),
+        ),
+    ))
+    .parse(i)?;
+    Ok((i, Command::Dwell(dur)))
+}
+
 pub fn command<const AXES: usize>(
     coord_labels: [char; AXES],
 ) -> impl Fn(&[u8]) -> IResult<&[u8], Command<AXES>> {
@@ -103,7 +129,7 @@ pub fn command<const AXES: usize>(
         alt((
             non_empty_upos_g_command("0", coord_labels, Command::RapidMove),
             non_empty_upos_g_command("1", coord_labels, Command::LinearMove),
-            non_empty_upos_g_command("2", coord_labels, Command::LinearMove),
+            dwell,
         ))
         .parse(i)
     }
@@ -167,5 +193,19 @@ mod tests {
             res,
             Command::RapidMove(UPos([None, None, None, Some(FixedU32::from_num(1500))]))
         );
+    }
+
+    #[test]
+    fn g4_secs() {
+        let (rem, res) = command(XYZF)(b"G4 S4").unwrap();
+        assert_eq!(rem, b"");
+        assert_eq!(res, Command::Dwell(Duration::from_secs(4)));
+    }
+
+    #[test]
+    fn g4_millis() {
+        let (rem, res) = command(XYZF)(b"G4 P123").unwrap();
+        assert_eq!(rem, b"");
+        assert_eq!(res, Command::Dwell(Duration::from_millis(123)));
     }
 }
