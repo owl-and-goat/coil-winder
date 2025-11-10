@@ -44,6 +44,9 @@ pio = "0.3.0"
 rand = { version = "0.9.1", default-features = false }
 picoserve = { version = "0.17.1", features = ["defmt", "embassy"] }
 
+# Local dependencies
+gcode = { path = "../gcode" }
+
 [profile.release]
 debug = 2
 

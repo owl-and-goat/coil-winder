@@ -6,7 +6,7 @@ use fixed::{types::extra::U10, FixedU32};
 // backwards(?)
 pub type UCoord = FixedU32<U10>;
 
-#[cfg_attr(test, derive(Debug, PartialEq, Eq))]
+#[derive(Debug, PartialEq, Eq)]
 pub struct UPos<const AXES: usize>(pub [Option<UCoord>; AXES]);
 
 impl<const AXES: usize> From<[Option<UCoord>; AXES]> for UPos<AXES> {
@@ -21,7 +21,7 @@ impl<const AXES: usize> From<[UCoord; AXES]> for UPos<AXES> {
     }
 }
 
-#[cfg_attr(test, derive(Debug, PartialEq, Eq))]
+#[derive(Debug, PartialEq, Eq)]
 pub enum Command<const AXES: usize> {
     // G-codes
     /// G0

@@ -128,7 +128,7 @@ dependencies = [
  "embedded-io",
  "embedded-io-async",
  "futures-intrusive",
- "heapless",
+ "heapless 0.8.0",
 ]
 
 [[package]]
@@ -194,7 +194,8 @@ dependencies = [
  "fixed",
  "fixed-macro",
  "futures",
- "heapless",
+ "gcode",
+ "heapless 0.8.0",
  "log",
  "panic-probe",
  "picoserve",
@@ -301,7 +302,7 @@ dependencies = [
  "embedded-hal 1.0.0",
  "embedded-io-async",
  "futures",
- "heapless",
+ "heapless 0.8.0",
  "num_enum 0.5.11",
 ]
 
@@ -515,7 +516,7 @@ dependencies = [
  "embassy-time",
  "embedded-io-async",
  "embedded-nal-async",
- "heapless",
+ "heapless 0.8.0",
  "managed",
  "smoltcp",
 ]
@@ -592,7 +593,7 @@ dependencies = [
  "embedded-io-async",
  "futures-core",
  "futures-sink",
- "heapless",
+ "heapless 0.8.0",
 ]
 
 [[package]]
@@ -628,7 +629,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "80e2ee86063bd028a420a5fb5898c18c87a8898026da1d4c852af2c443d0a454"
 dependencies = [
  "embassy-executor-timer-queue",
- "heapless",
+ "heapless 0.8.0",
 ]
 
 [[package]]
@@ -643,7 +644,7 @@ dependencies = [
  "embassy-sync",
  "embassy-usb-driver",
  "embedded-io-async",
- "heapless",
+ "heapless 0.8.0",
  "ssmarshal",
  "usbd-hid",
 ]
@@ -933,6 +934,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "gcode"
+version = "0.1.0"
+dependencies = [
+ "fixed",
+ "heapless 0.9.1",
+ "nom",
+]
+
+[[package]]
 name = "generic-array"
 version = "0.14.9"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -986,6 +996,16 @@ dependencies = [
  "defmt 0.3.100",
  "hash32",
  "serde",
+ "stable_deref_trait",
+]
+
+[[package]]
+name = "heapless"
+version = "0.9.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "b1edcd5a338e64688fbdcb7531a846cfd3476a54784dcb918a0844682bc7ada5"
+dependencies = [
+ "hash32",
  "stable_deref_trait",
 ]
 
@@ -1114,6 +1134,15 @@ name = "new_debug_unreachable"
 version = "1.0.6"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "650eef8c711430f1a879fdd01d4745a7deea475becfb90269c06775983bbf086"
+
+[[package]]
+name = "nom"
+version = "8.0.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "df9761775871bdef83bee530e60050f7e54b1105350d6884eb0fb4f46c2f9405"
+dependencies = [
+ "memchr",
+]
 
 [[package]]
 name = "num-traits"
@@ -1246,7 +1275,7 @@ dependencies = [
  "embassy-net",
  "embassy-time",
  "embedded-io-async",
- "heapless",
+ "heapless 0.8.0",
  "picoserve_derive",
  "serde",
  "serde-json-core",
@@ -1555,7 +1584,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "5b81787e655bd59cecadc91f7b6b8651330b2be6c33246039a65e5cd6f4e0828"
 dependencies = [
  "defmt 0.3.100",
- "heapless",
+ "heapless 0.8.0",
  "ryu",
  "serde",
 ]
@@ -1636,7 +1665,7 @@ dependencies = [
  "byteorder",
  "cfg-if",
  "defmt 0.3.100",
- "heapless",
+ "heapless 0.8.0",
  "managed",
 ]
 
@@ -1773,7 +1802,7 @@ version = "0.3.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "98816b1accafbb09085168b90f27e93d790b4bfa19d883466b5e53315b5f06a6"
 dependencies = [
- "heapless",
+ "heapless 0.8.0",
  "portable-atomic",
 ]
 
