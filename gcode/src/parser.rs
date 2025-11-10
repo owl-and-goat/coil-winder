@@ -186,6 +186,20 @@ mod tests {
     }
 
     #[test]
+    fn g0_incomplete() {
+        let (remaining, res) = command(XYZ)(b"G0 X90.6").unwrap();
+        assert_eq!(remaining, b"");
+        assert_eq!(
+            res,
+            Command::RapidMove(UPos([
+                Some(FixedU32::from_str("90.6").unwrap()),
+                None,
+                None,
+            ]))
+        )
+    }
+
+    #[test]
     fn g0_feedrate() {
         let (remaining, res) = command(XYZF)(b"G0 F1500").unwrap();
         assert_eq!(remaining, b"");
