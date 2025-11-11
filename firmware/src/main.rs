@@ -98,7 +98,7 @@ async fn server_task(stack: embassy_net::Stack<'static>, mut control: Control<'s
 
             blink_once(&mut control).await;
             let mut resp = Vec::<_, 1024>::new();
-            core::write!(&mut resp, "{command:?}").unwrap();
+            writeln!(&mut resp, "{command:?}").unwrap();
             if let Err(e) = embedded_io_async::Write::write_all(&mut socket, &resp).await {
                 warn!("write error: {}", e);
                 continue 'accept;
