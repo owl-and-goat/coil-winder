@@ -1,0 +1,10 @@
+[package]
+name = "client"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+clap = { version = "4.5.51", features = ["derive", "unicode"] }
+eyre = "0.6.12"
+gcode = { path = "../gcode" }
+rustyline = "17.0.2"
