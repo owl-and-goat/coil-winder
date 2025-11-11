@@ -24,7 +24,7 @@ use {defmt_rtt as _, panic_probe as _};
 const WIFI_NETWORK: &str = env!("WIFI_NETWORK");
 const WIFI_PASSWORD: &str = env!("WIFI_PASSWORD");
 const PORT: u16 = 1234;
-const AXES: [char; 3] = ['X', 'Y', 'Z'];
+const AXES: [char; 4] = ['X', 'Y', 'Z', 'F'];
 
 bind_interrupts!(struct Irqs {
     PIO0_IRQ_0 => InterruptHandler<PIO0>;
