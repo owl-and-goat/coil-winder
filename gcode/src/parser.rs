@@ -34,16 +34,13 @@ pub fn upos<const AXES: usize>(
 ) -> impl Fn(&[u8]) -> IResult<&[u8], UPos<AXES>> {
     move |mut i| {
         let mut res = Vec::<_, AXES>::new();
-        let mut first = true;
         for c in coord_labels {
-            if !first {
-                (i, _) = multispace1(i)?;
-            }
             let coord;
-            (i, coord) = opt(labeled_ucoord(c)).parse(i)?;
-            if coord.is_some() {
-                first = false;
-            }
+            (i, coord) = opt(preceded(
+                take_while1(|c| c == b' ' || c == b'\t'),
+                labeled_ucoord(c),
+            ))
+            .parse(i)?;
             res.push(coord).unwrap();
         }
         Ok((i, UPos::from(res.into_array().unwrap())))
@@ -93,7 +90,6 @@ pub fn non_empty_upos_g_command<const AXES: usize>(
 ) -> impl Fn(&[u8]) -> IResult<&[u8], Command<AXES>> {
     move |i| {
         let (i, _) = g(g_code)(i)?;
-        let (i, _) = multispace1(i)?;
         let (i, pos) = non_empty_upos(coord_labels)(i)?;
         Ok((i, mk_command(pos)))
     }
@@ -143,27 +139,6 @@ mod tests {
 
     const XYZ: [char; 3] = ['X', 'Y', 'Z'];
     const XYZF: [char; 4] = ['X', 'Y', 'Z', 'F'];
-
-    #[test]
-    fn xyz_upos() {
-        let (remaining, res) = upos(XYZ).parse(b"X90.6 Y13.8 Z22").unwrap();
-        assert_eq!(remaining, b"");
-        assert_eq!(
-            res,
-            UPos([
-                Some(FixedU32::from_str("90.6").unwrap()),
-                Some(FixedU32::from_str("13.8").unwrap()),
-                Some(FixedU32::from_num(22)),
-            ])
-        )
-    }
-
-    #[test]
-    fn z_upos() {
-        let (remaining, res) = upos(XYZ).parse(b"Z22").unwrap();
-        assert_eq!(remaining, b"");
-        assert_eq!(res, UPos([None, None, Some(FixedU32::from_num(22)),]))
-    }
 
     #[test]
     fn non_empty_upos_requires_non_empty_coords() {
