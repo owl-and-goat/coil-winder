@@ -2,8 +2,9 @@
 #![no_main]
 #![feature(impl_trait_in_assoc_type)]
 
-use core::{fmt::Write, net::Ipv4Addr};
+use core::net::Ipv4Addr;
 
+use crate::a4988::Direction;
 use cyw43::{Control, JoinOptions};
 use cyw43_pio::{PioSpi, DEFAULT_CLOCK_DIVIDER};
 use defmt::*;
@@ -16,15 +17,21 @@ use embassy_rp::{
     peripherals::{DMA_CH0, PIO0},
     pio::{InterruptHandler, Pio},
 };
+use embassy_sync::{blocking_mutex::raw::NoopRawMutex, signal::Signal};
 use embassy_time::{Duration, Timer};
+use embedded_io_async::Write;
 use heapless::Vec;
 use picoserve::make_static;
+
 use {defmt_rtt as _, panic_probe as _};
+
+mod a4988;
 
 const WIFI_NETWORK: &str = env!("WIFI_NETWORK");
 const WIFI_PASSWORD: &str = env!("WIFI_PASSWORD");
 const PORT: u16 = 1234;
-const AXES: [char; 4] = ['X', 'Y', 'Z', 'F'];
+const AXES: usize = 4;
+const AXIS_LABELS: [char; AXES] = ['X', 'Y', 'Z', 'F'];
 
 bind_interrupts!(struct Irqs {
     PIO0_IRQ_0 => InterruptHandler<PIO0>;
@@ -43,7 +50,11 @@ async fn net_task(mut runner: embassy_net::Runner<'static, cyw43::NetDriver<'sta
 }
 
 #[embassy_executor::task]
-async fn server_task(stack: embassy_net::Stack<'static>, mut control: Control<'static>) -> ! {
+async fn server_task(
+    stack: embassy_net::Stack<'static>,
+    mut control: Control<'static>,
+    command_signal: &'static Signal<NoopRawMutex, gcode::Command<AXES>>,
+) -> ! {
     let mut rx_buffer = [0; 1024];
     let mut tx_buffer = [0; 1024];
     let mut buf = [0; 2048];
@@ -75,7 +86,7 @@ async fn server_task(stack: embassy_net::Stack<'static>, mut control: Control<'s
                     };
                     n += read;
 
-                    match gcode::parse_single_command(AXES, &buf[..n]) {
+                    match gcode::parse_single_command(AXIS_LABELS, &buf[..n]) {
                         Ok((remaining, command)) => {
                             let start = usize::try_from(unsafe {
                                 remaining.as_ptr().offset_from(buf.as_ptr())
@@ -96,13 +107,54 @@ async fn server_task(stack: embassy_net::Stack<'static>, mut control: Control<'s
                 }
             };
 
-            blink_once(&mut control).await;
-            let mut resp = Vec::<_, 1024>::new();
-            writeln!(&mut resp, "{command:?}").unwrap();
-            if let Err(e) = embedded_io_async::Write::write_all(&mut socket, &resp).await {
-                warn!("write error: {}", e);
-                continue 'accept;
+            match &command {
+                gcode::Command::RapidMove(pos) | gcode::Command::LinearMove(pos)
+                    if pos.0.iter().filter(|p| p.is_some()).count() == 1 =>
+                {
+                    blink_once(&mut control).await;
+                    command_signal.signal(command);
+                    if let Err(e) = socket.write_all(b"gotcha!").await {
+                        warn!("write error: {}", e);
+                        continue 'accept;
+                    }
+                }
+                _ => {
+                    blink_once(&mut control).await;
+                    blink_once(&mut control).await;
+                    if let Err(e) = socket.write_all(b"huh??").await {
+                        warn!("write error: {}", e);
+                        continue 'accept;
+                    }
+                }
             }
+        }
+    }
+}
+
+// TODO(aspen): Move this onto Core 2
+#[embassy_executor::task]
+async fn stepper_driver_task(
+    mut driver: a4988::Driver<AXES>,
+    command_signal: &'static Signal<NoopRawMutex, gcode::Command<AXES>>,
+) -> ! {
+    loop {
+        let command = command_signal.wait().await;
+        match command {
+            gcode::Command::RapidMove(pos) | gcode::Command::LinearMove(pos) => {
+                let Some((axis, dist)) = pos
+                    .0
+                    .iter()
+                    .enumerate()
+                    .find_map(|(i, coord)| coord.map(|c| (i, c)))
+                else {
+                    continue;
+                };
+
+                for _ in 0..dist.to_num() {
+                    driver.single_step(axis, Direction::Forwards).await;
+                }
+            }
+            _ => continue,
         }
     }
 }
@@ -165,6 +217,19 @@ async fn main(spawner: Spawner) {
         info!("join failed with status={}", err.status);
     }
 
+    let command_signal = make_static!(Signal<NoopRawMutex, gcode::Command<AXES>>, Signal::new());
+
     // let control = make_static!(Mutex<NoopRawMutex, Control>, Mutex::new(control));
-    spawner.must_spawn(server_task(stack, control));
+    spawner.must_spawn(server_task(stack, control, command_signal));
+
+    let driver = a4988::Driver::builder()
+        .direction_pin(p.PIN_15)
+        .step_axis_pins([
+            Output::new(p.PIN_16, Level::Low),
+            Output::new(p.PIN_17, Level::Low),
+            Output::new(p.PIN_18, Level::Low),
+            Output::new(p.PIN_19, Level::Low),
+        ])
+        .build();
+    spawner.must_spawn(stepper_driver_task(driver, command_signal));
 }
