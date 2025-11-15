@@ -4,7 +4,6 @@
 
 use core::{net::Ipv4Addr, ptr::addr_of_mut};
 
-use crate::a4988::Direction;
 use cyw43::{Control, JoinOptions};
 use cyw43_pio::{PioSpi, DEFAULT_CLOCK_DIVIDER};
 use defmt::*;
@@ -28,6 +27,7 @@ use static_cell::StaticCell;
 use {defmt_rtt as _, panic_probe as _};
 
 mod a4988;
+pub(crate) mod util;
 
 const WIFI_NETWORK: &str = env!("WIFI_NETWORK");
 const WIFI_PASSWORD: &str = env!("WIFI_PASSWORD");
@@ -136,14 +136,14 @@ async fn server_task(
 // TODO(aspen): Move this onto Core 2
 #[embassy_executor::task]
 async fn stepper_driver_task(
-    mut driver: a4988::Driver<AXES>,
+    mut driver: a4988::Driver<'static, PIO0, 1>,
     command_signal: &'static Signal<CriticalSectionRawMutex, gcode::Command<AXES>>,
 ) -> ! {
     loop {
         let command = command_signal.wait().await;
         match command {
             gcode::Command::RapidMove(pos) | gcode::Command::LinearMove(pos) => {
-                let Some((axis, dist)) = pos
+                let Some((_axis, dist)) = pos
                     .0
                     .iter()
                     .enumerate()
@@ -152,9 +152,7 @@ async fn stepper_driver_task(
                     continue;
                 };
 
-                for _ in 0..dist.to_num() {
-                    driver.single_step(axis, Direction::Forwards).await;
-                }
+                driver.step(dist.to_num()).await
             }
             _ => continue,
         }
@@ -235,15 +233,18 @@ fn main() -> ! {
         p.DMA_CH0,
     );
 
-    let driver = a4988::Driver::builder()
-        .direction_pin(p.PIN_15)
-        .step_axis_pins([
-            Output::new(p.PIN_16, Level::Low),
-            Output::new(p.PIN_17, Level::Low),
-            Output::new(p.PIN_18, Level::Low),
-            Output::new(p.PIN_19, Level::Low),
-        ])
-        .build();
+    // let driver = a4988::Driver::builder()
+    //     .direction_pin(p.PIN_15)
+    // .step_axis_pins([
+    //     Output::new(p.PIN_16, Level::Low),
+    // Output::new(p.PIN_17, Level::Low),
+    // Output::new(p.PIN_18, Level::Low),
+    // Output::new(p.PIN_19, Level::Low),
+    // ])
+    // .build();
+    //
+    let prg = a4988::Program::new(&mut pio.common);
+    let driver = a4988::Driver::new(&mut pio.common, pio.sm1, pio.irq1, p.PIN_16, &prg);
 
     static COMMAND_SIGNAL: StaticCell<Signal<CriticalSectionRawMutex, gcode::Command<AXES>>> =
         StaticCell::new();
