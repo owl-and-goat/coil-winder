@@ -1,10 +1,10 @@
-use std::fs::File;
 use std::io::{self, BufRead, BufReader, ErrorKind, Write};
 use std::net::{SocketAddr, TcpStream, ToSocketAddrs};
-use std::path::PathBuf;
 
 use clap::Parser;
+use clio::Input;
 use eyre::{bail, Result};
+use indicatif::{ProgressBar, ProgressStyle};
 use rustyline::history::History;
 use rustyline::{error::ReadlineError, DefaultEditor};
 
@@ -23,8 +23,8 @@ enum Command {
     /// Run a gcode program
     Run {
         /// Path to gcode program to run
-        #[clap(long, short)]
-        path: PathBuf,
+        #[clap(value_parser)]
+        program: Input,
 
         /// Skip verification that the program parses before running
         #[clap(long)]
@@ -46,8 +46,8 @@ struct Args {
     command: Command,
 }
 
-fn read_commands_from_file(path: PathBuf, verify: bool) -> Result<Vec<String>> {
-    let reader = BufReader::new(File::open(&path)?);
+fn read_commands(input: impl io::Read, verify: bool) -> Result<Vec<String>> {
+    let reader = BufReader::new(input);
     let mut res = Vec::new();
     if !verify {
         for line in reader.lines() {
@@ -59,7 +59,7 @@ fn read_commands_from_file(path: PathBuf, verify: bool) -> Result<Vec<String>> {
             let line = line.trim();
             if line.starts_with('(') {
                 if !line.ends_with(')') {
-                    bail!("{}:{i}: Mismatched parenthesis in comment", path.display());
+                    bail!("line {i}: Mismatched parenthesis in comment");
                 }
                 continue;
             }
@@ -73,7 +73,7 @@ fn read_commands_from_file(path: PathBuf, verify: bool) -> Result<Vec<String>> {
             }
             match gcode::parse_single_command(['X', 'Y', 'Z', 'F'], line.as_bytes()) {
                 Ok(_) => {}
-                Err(_) => bail!("{}:{i}: Invalid gcode command", path.display()),
+                Err(_) => bail!("line {i}: Invalid gcode command"),
             };
             res.push(line);
         }
@@ -143,16 +143,22 @@ fn main() -> Result<()> {
             Ok(())
         }
         Command::Run {
-            path,
+            program,
             no_verify,
             print_responses,
         } => {
-            let commands = read_commands_from_file(path, !no_verify)?;
+            let commands = read_commands(program, !no_verify)?;
             let n = commands.len();
+            let bar = ProgressBar::new(n as u64).with_style(
+                ProgressStyle::with_template("[{pos}/{len}][{elapsed}/{eta}]|{bar:50.blue}|{msg}")
+                    .unwrap(),
+            );
             for command in commands {
+                bar.inc(1);
+                bar.set_message(command.clone());
                 let resp = client.send(command)?;
                 if print_responses {
-                    println!("{resp}");
+                    bar.println(resp);
                 }
             }
 
