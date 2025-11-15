@@ -19,7 +19,7 @@ enum Command {
 #[derive(clap::Parser, Debug)]
 #[command(version)]
 struct Args {
-    #[clap(default_value = "192.168.11.40:1234")]
+    #[clap(long, short, default_value = "192.168.11.40:1234")]
     addr: SocketAddr,
 
     #[clap(subcommand)]
