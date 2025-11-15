@@ -17,7 +17,10 @@ use embassy_rp::{
     peripherals::{DMA_CH0, PIO0},
     pio::{InterruptHandler, Pio},
 };
-use embassy_sync::{blocking_mutex::raw::CriticalSectionRawMutex, signal::Signal};
+use embassy_sync::{
+    blocking_mutex::raw::CriticalSectionRawMutex,
+    channel::{self, Channel},
+};
 use embassy_time::{Duration, Timer};
 use embedded_io_async::Write;
 use heapless::Vec;
@@ -34,6 +37,7 @@ const WIFI_PASSWORD: &str = env!("WIFI_PASSWORD");
 const PORT: u16 = 1234;
 const AXES: usize = 4;
 const AXIS_LABELS: [char; AXES] = ['X', 'Y', 'Z', 'F'];
+const COMMAND_BUFFER_SIZE: usize = 32;
 
 bind_interrupts!(struct Irqs {
     PIO0_IRQ_0 => InterruptHandler<PIO0>;
@@ -55,7 +59,12 @@ async fn net_task(mut runner: embassy_net::Runner<'static, cyw43::NetDriver<'sta
 async fn server_task(
     stack: embassy_net::Stack<'static>,
     mut control: Control<'static>,
-    command_signal: &'static Signal<CriticalSectionRawMutex, gcode::Command<AXES>>,
+    command_tx: channel::Sender<
+        'static,
+        CriticalSectionRawMutex,
+        gcode::Command<AXES>,
+        COMMAND_BUFFER_SIZE,
+    >,
 ) -> ! {
     let mut rx_buffer = [0; 1024];
     let mut tx_buffer = [0; 1024];
@@ -114,7 +123,7 @@ async fn server_task(
                     if pos.0.iter().filter(|p| p.is_some()).count() == 1 =>
                 {
                     blink_once(&mut control).await;
-                    command_signal.signal(command);
+                    command_tx.send(command).await;
                     if let Err(e) = socket.write_all(b"gotcha!\n").await {
                         warn!("write error: {}", e);
                         continue 'accept;
@@ -137,10 +146,15 @@ async fn server_task(
 #[embassy_executor::task]
 async fn stepper_driver_task(
     mut driver: a4988::Driver<'static, PIO0, 1>,
-    command_signal: &'static Signal<CriticalSectionRawMutex, gcode::Command<AXES>>,
+    command_rx: channel::Receiver<
+        'static,
+        CriticalSectionRawMutex,
+        gcode::Command<AXES>,
+        COMMAND_BUFFER_SIZE,
+    >,
 ) -> ! {
     loop {
-        let command = command_signal.wait().await;
+        let command = command_rx.receive().await;
         match command {
             gcode::Command::RapidMove(pos) | gcode::Command::LinearMove(pos) => {
                 let Some((_axis, dist)) = pos
@@ -171,7 +185,12 @@ async fn core0(
     pwr: Output<'static>,
     spi: PioSpi<'static, PIO0, 0, DMA_CH0>,
     spawner: Spawner,
-    command_signal: &'static Signal<CriticalSectionRawMutex, gcode::Command<AXES>>,
+    command_tx: channel::Sender<
+        'static,
+        CriticalSectionRawMutex,
+        gcode::Command<AXES>,
+        COMMAND_BUFFER_SIZE,
+    >,
 ) {
     let fw = include_bytes!("../cyw43-firmware/43439A0.bin");
     let clm = include_bytes!("../cyw43-firmware/43439A0_clm.bin");
@@ -208,7 +227,7 @@ async fn core0(
     }
 
     // let control = make_static!(Mutex<NoopRawMutex, Control>, Mutex::new(control));
-    spawner.must_spawn(server_task(stack, control, command_signal));
+    spawner.must_spawn(server_task(stack, control, command_tx));
 }
 
 static mut CORE1_STACK: Stack<4096> = Stack::new();
@@ -246,19 +265,22 @@ fn main() -> ! {
     let prg = a4988::Program::new(&mut pio.common);
     let driver = a4988::Driver::new(&mut pio.common, pio.sm1, pio.irq1, p.PIN_16, &prg);
 
-    static COMMAND_SIGNAL: StaticCell<Signal<CriticalSectionRawMutex, gcode::Command<AXES>>> =
-        StaticCell::new();
-    let command_signal: &'static _ = COMMAND_SIGNAL.init(Signal::new());
+    static COMMAND_CHANNEL: StaticCell<
+        Channel<CriticalSectionRawMutex, gcode::Command<AXES>, COMMAND_BUFFER_SIZE>,
+    > = StaticCell::new();
+    let command_channel: &'static _ = COMMAND_CHANNEL.init(Channel::new());
+    let command_rx = command_channel.receiver();
+    let command_tx = command_channel.sender();
 
     embassy_rp::multicore::spawn_core1(
         p.CORE1,
         unsafe { &mut *addr_of_mut!(CORE1_STACK) },
         move || {
             let executor1 = EXECUTOR1.init(Executor::new());
-            executor1.run(|spawner| spawner.must_spawn(stepper_driver_task(driver, command_signal)))
+            executor1.run(|spawner| spawner.must_spawn(stepper_driver_task(driver, command_rx)))
         },
     );
 
     let executor0 = EXECUTOR0.init(Executor::new());
-    executor0.run(|spawner| spawner.must_spawn(core0(pwr, spi, spawner, command_signal)))
+    executor0.run(|spawner| spawner.must_spawn(core0(pwr, spi, spawner, command_tx)))
 }
