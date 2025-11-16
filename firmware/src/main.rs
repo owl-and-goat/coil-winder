@@ -145,8 +145,9 @@ async fn server_task(
 
 // TODO(aspen): Move this onto Core 2
 #[embassy_executor::task]
-async fn stepper_driver_task(
-    mut driver: a4988::Driver<'static, PIO0, 1>,
+async fn motion_task(
+    motion: motion::State<AXES>,
+    driver: a4988::Driver<'static, PIO0, 1>,
     command_rx: channel::Receiver<
         'static,
         CriticalSectionRawMutex,
@@ -154,24 +155,7 @@ async fn stepper_driver_task(
         COMMAND_BUFFER_SIZE,
     >,
 ) -> ! {
-    loop {
-        let command = command_rx.receive().await;
-        match command {
-            gcode::Command::RapidMove(pos) | gcode::Command::LinearMove(pos) => {
-                let Some((_axis, dist)) = pos
-                    .0
-                    .iter()
-                    .enumerate()
-                    .find_map(|(i, coord)| coord.map(|c| (i, c)))
-                else {
-                    continue;
-                };
-
-                driver.step(dist.to_num()).await
-            }
-            _ => continue,
-        }
-    }
+    motion.run(driver, command_rx).await;
 }
 
 async fn blink_once(control: &mut Control<'_>) {
@@ -267,7 +251,14 @@ fn main() -> ! {
     // .build();
 
     let prg = a4988::Program::new(&mut pio.common);
-    let driver = a4988::Driver::new(&mut pio.common, pio.sm1, pio.irq1, p.PIN_16, &prg);
+    let driver = a4988::Driver::new(
+        &mut pio.common,
+        pio.sm1,
+        pio.irq1,
+        /* step_pin */ p.PIN_14,
+        /* dir_pin */ p.PIN_15,
+        &prg,
+    );
 
     static COMMAND_CHANNEL: StaticCell<
         Channel<CriticalSectionRawMutex, gcode::Command<AXES>, COMMAND_BUFFER_SIZE>,
@@ -281,7 +272,9 @@ fn main() -> ! {
         unsafe { &mut *addr_of_mut!(CORE1_STACK) },
         move || {
             let executor1 = EXECUTOR1.init(Executor::new());
-            executor1.run(|spawner| spawner.must_spawn(stepper_driver_task(driver, command_rx)))
+            executor1.run(|spawner| {
+                spawner.must_spawn(motion_task(motion::State::new(), driver, command_rx))
+            })
         },
     );
 

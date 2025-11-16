@@ -2,7 +2,12 @@
 
 use core::cmp::Ordering;
 
-use embassy_rp::{pio, pio_programs::clock_divider::calculate_pio_clock_divider, Peri};
+use embassy_rp::{
+    gpio::{Level, Output},
+    pio,
+    pio_programs::clock_divider::calculate_pio_clock_divider,
+    Peri,
+};
 
 use crate::util::OnDrop;
 
@@ -38,6 +43,7 @@ impl<'a, T: pio::Instance> Program<'a, T> {
 }
 
 pub struct Driver<'d, T: pio::Instance, const SM: usize> {
+    dir: Output<'d>,
     irq: pio::Irq<'d, T, SM>,
     sm: pio::StateMachine<'d, T, SM>,
 }
@@ -47,13 +53,15 @@ impl<'d, T: pio::Instance, const SM: usize> Driver<'d, T, SM> {
         pio: &mut pio::Common<'d, T>,
         mut sm: pio::StateMachine<'d, T, SM>,
         irq: pio::Irq<'d, T, SM>,
-        pin: Peri<'d, impl pio::PioPin>,
+        step_pin: Peri<'d, impl pio::PioPin>,
+        dir_pin: Peri<'d, impl pio::PioPin>,
         program: &Program<'d, T>,
     ) -> Self {
-        let pin = pio.make_pio_pin(pin);
-        sm.set_pin_dirs(pio::Direction::Out, &[&pin]);
+        let dir = Output::new(dir_pin, Level::Low);
+        let step_pin = pio.make_pio_pin(step_pin);
+        sm.set_pin_dirs(pio::Direction::Out, &[&step_pin]);
         let mut cfg = pio::Config::default();
-        cfg.set_out_pins(&[&pin]);
+        cfg.set_out_pins(&[&step_pin]);
         cfg.clock_divider = calculate_pio_clock_divider(
             100 *
             /* TODO(aspen): ??? */
@@ -62,14 +70,20 @@ impl<'d, T: pio::Instance, const SM: usize> Driver<'d, T, SM> {
         cfg.use_program(&program.prg, &[]);
         sm.set_config(&cfg);
         sm.set_enable(true);
-        Self { irq, sm }
+        Self { dir, irq, sm }
     }
 
     pub async fn step(&mut self, steps: i32) {
         match steps.cmp(&0) {
-            Ordering::Less => self.run((-steps) - 1).await,
+            Ordering::Less => {
+                self.dir.set_low();
+                self.run((-steps) - 1).await
+            }
             Ordering::Equal => {}
-            Ordering::Greater => self.run(steps - 1).await,
+            Ordering::Greater => {
+                self.dir.set_high();
+                self.run(steps - 1).await
+            }
         }
     }
 
