@@ -263,7 +263,7 @@ fn main() -> ! {
     // .build();
     //
     let prg = a4988::Program::new(&mut pio.common);
-    let driver = a4988::Driver::new(&mut pio.common, pio.sm1, pio.irq1, p.PIN_16, &prg);
+    let driver = a4988::Driver::new(&mut pio.common, pio.sm1, pio.irq1, p.PIN_15, p.PIN_16, &prg);
 
     static COMMAND_CHANNEL: StaticCell<
         Channel<CriticalSectionRawMutex, gcode::Command<AXES>, COMMAND_BUFFER_SIZE>,
