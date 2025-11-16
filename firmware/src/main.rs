@@ -30,14 +30,15 @@ use static_cell::StaticCell;
 use {defmt_rtt as _, panic_probe as _};
 
 mod a4988;
+mod motion;
 pub(crate) mod util;
 
-const WIFI_NETWORK: &str = env!("WIFI_NETWORK");
-const WIFI_PASSWORD: &str = env!("WIFI_PASSWORD");
+const WIFI_NETWORK: Option<&str> = option_env!("WIFI_NETWORK");
+const WIFI_PASSWORD: Option<&str> = option_env!("WIFI_PASSWORD");
 const PORT: u16 = 1234;
 const AXES: usize = 4;
 const AXIS_LABELS: [char; AXES] = ['X', 'Y', 'Z', 'F'];
-const COMMAND_BUFFER_SIZE: usize = 32;
+pub const COMMAND_BUFFER_SIZE: usize = 32;
 
 bind_interrupts!(struct Irqs {
     PIO0_IRQ_0 => InterruptHandler<PIO0>;
@@ -220,7 +221,10 @@ async fn core0(
     spawner.must_spawn(net_task(runner));
 
     while let Err(err) = control
-        .join(WIFI_NETWORK, JoinOptions::new(WIFI_PASSWORD.as_bytes()))
+        .join(
+            WIFI_NETWORK.unwrap_or(""),
+            JoinOptions::new(WIFI_PASSWORD.unwrap_or("").as_bytes()),
+        )
         .await
     {
         info!("join failed with status={}", err.status);
@@ -261,7 +265,7 @@ fn main() -> ! {
     // Output::new(p.PIN_19, Level::Low),
     // ])
     // .build();
-    //
+
     let prg = a4988::Program::new(&mut pio.common);
     let driver = a4988::Driver::new(&mut pio.common, pio.sm1, pio.irq1, p.PIN_15, p.PIN_16, &prg);
 

@@ -23,6 +23,7 @@ defmt = "1.0"
 defmt-rtt = "1.0"
 fixed = "1.29.0"
 fixed-macro = "1.2"
+az = "1.2.1"
 
 cortex-m = { version = "0.7.7", features = ["inline-asm"] }
 cortex-m-rt = "0.7.5"
@@ -30,6 +31,7 @@ panic-probe = { version = "1.0", features = ["print-defmt"] }
 futures = { version = "0.3.31", default-features = false, features = ["async-await", "cfg-target-has-atomic", "unstable"] }
 heapless = "0.8"
 
+embedded-test = "0.7.0"
 
 embedded-hal-1 = { package = "embedded-hal", version = "=1.0.0" }
 embedded-hal-async = "1.0.0"
@@ -50,6 +52,13 @@ gcode = { path = "../gcode" }
 [profile.release]
 debug = 2
 
+[lib]
+harness = false
+
+[[test]]
+name = "coil_winder_tests"
+harness = false
+
 # Below configs are here to mute the rust-analyzer error.
 # "Can't find crate for 'test'" as this is a no_std project
 [[bin]]
@@ -57,3 +66,5 @@ name = "coil-winder"
 test = false
 bench = false
 
+# [[lib]]
+# name = "coil-winder"
