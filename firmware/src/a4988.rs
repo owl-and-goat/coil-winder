@@ -15,8 +15,24 @@ pub struct Program<'a, T: pio::Instance> {
 impl<'a, T: pio::Instance> Program<'a, T> {
     /// Load the program into the given pio
     pub fn new(common: &mut pio::Common<'a, T>) -> Self {
-        let prg = ::pio::pio_file!("src/steps.s");
+        let prg = ::pio::pio_asm!(
+            "pull block",
+            "mov x, osr", // x := steps
+            "jmp !x end",
+            "loop:",
+            "set y, 1",
+            "mov osr, y",
+            "out pins, 1"
+            "set y, 0",
+            "mov osr, y",
+            "out pins, 1"
+            "jmp x-- loop",
+            "end:",
+            "irq 0 rel"
+        );
+
         let prg = common.load_program(&prg.program);
+
         Self { prg }
     }
 }
@@ -31,17 +47,17 @@ impl<'d, T: pio::Instance, const SM: usize> Driver<'d, T, SM> {
         pio: &mut pio::Common<'d, T>,
         mut sm: pio::StateMachine<'d, T, SM>,
         irq: pio::Irq<'d, T, SM>,
-        x_step: Peri<'d, impl pio::PioPin>,
-        z_step: Peri<'d, impl pio::PioPin>,
+        pin: Peri<'d, impl pio::PioPin>,
         program: &Program<'d, T>,
     ) -> Self {
-        let (x_step, z_step) = (pio.make_pio_pin(x_step), pio.make_pio_pin(z_step));
-
-        sm.set_pin_dirs(pio::Direction::Out, &[&x_step, &z_step]);
+        let pin = pio.make_pio_pin(pin);
+        sm.set_pin_dirs(pio::Direction::Out, &[&pin]);
         let mut cfg = pio::Config::default();
-        cfg.set_set_pins(&[&x_step, &z_step]);
+        cfg.set_out_pins(&[&pin]);
         cfg.clock_divider = calculate_pio_clock_divider(
-            40_000, // Hz
+            100 *
+            /* TODO(aspen): ??? */
+                136,
         );
         cfg.use_program(&program.prg, &[]);
         sm.set_config(&cfg);
