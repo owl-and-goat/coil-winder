@@ -37,8 +37,33 @@ impl<T, U, V, const N: usize> ArrayZipWith<[U; N], V, [V; N]> for [T; N] {
         self.map(move |x| {
             let y =
                 // SAFETY: Types guarantee that the lengths match
-                unsafe {other.next().unwrap_unchecked()};
+                unsafe { other.next().unwrap_unchecked() };
             f(x, y)
         })
+    }
+}
+
+#[allow(dead_code)] // maybe we'll use this someday
+pub trait ArrayUnzip<T, U, const N: usize> {
+    fn unzip(self) -> ([T; N], [U; N]);
+}
+
+impl<T, U, const N: usize> ArrayUnzip<T, U, N> for [(T, U); N] {
+    fn unzip(self) -> ([T; N], [U; N]) {
+        use core::mem::{self, MaybeUninit};
+
+        // SAFETY: In both cases, MaybeUninit<[MaybeUninit<_>; N]> has the same layout as
+        // [MaybeUninit<_>; N]
+        let mut first: [MaybeUninit<T>; N] = unsafe { MaybeUninit::uninit().assume_init() };
+        let mut snd: [MaybeUninit<U>; N] = unsafe { MaybeUninit::uninit().assume_init() };
+
+        for (idx, (t, u)) in self.into_iter().enumerate() {
+            first[idx] = MaybeUninit::new(t);
+            snd[idx] = MaybeUninit::new(u);
+        }
+
+        // SAFETY: By this point, we've initialized each element of both array (because the lengths
+        // are guaranteed to match)
+        unsafe { (mem::transmute_copy(&first), mem::transmute_copy(&snd)) }
     }
 }
