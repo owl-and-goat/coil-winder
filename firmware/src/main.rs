@@ -27,6 +27,8 @@ use heapless::Vec;
 use picoserve::make_static;
 use static_cell::StaticCell;
 
+use crate::motion::{ICoord, MicronsPerStep};
+
 use {defmt_rtt as _, panic_probe as _};
 
 mod a4988;
@@ -136,7 +138,7 @@ async fn server_task(
 // TODO(aspen): Move this onto Core 2
 #[embassy_executor::task]
 async fn motion_task(
-    motion: motion::State<AXES>,
+    motion: motion::State,
     driver: a4988::Driver<'static, PIO0, 1, 2, 3>,
     command_rx: channel::Receiver<
         'static,
@@ -279,7 +281,15 @@ fn main() -> ! {
         move || {
             let executor1 = EXECUTOR1.init(Executor::new());
             executor1.run(|spawner| {
-                spawner.must_spawn(motion_task(motion::State::new(), driver, command_rx))
+                spawner.must_spawn(motion_task(
+                    motion::State::new([
+                        /* X */ MicronsPerStep(ICoord::from_num(12)),
+                        /* Z */ MicronsPerStep(ICoord::from_num(6)),
+                        /* C */ MicronsPerStep(ICoord::from_num(6)),
+                    ]),
+                    driver,
+                    command_rx,
+                ))
             })
         },
     );

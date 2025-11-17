@@ -195,6 +195,7 @@ dependencies = [
  "embedded-test",
  "fixed",
  "fixed-macro",
+ "fixed-sqrt",
  "futures",
  "gcode",
  "heapless 0.8.0",
@@ -906,6 +907,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "fixed-sqrt"
+version = "0.3.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "a1f5bc2003cccf30b37ce2b98ba446a655a747f2f0846a8659a03529793014df"
+dependencies = [
+ "fixed",
+ "integer-sqrt",
+ "typenum",
+]
+
+[[package]]
 name = "fixedbitset"
 version = "0.5.7"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1090,6 +1102,15 @@ checksum = "6717a8d2a5a929a1a2eb43a12812498ed141a0bcfb7e8f7844fbdbe4303bba9f"
 dependencies = [
  "equivalent",
  "hashbrown 0.16.0",
+]
+
+[[package]]
+name = "integer-sqrt"
+version = "0.1.5"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "276ec31bcb4a9ee45f58bec6f9ec700ae4cf4f4f8f2fa7e06cb406bd5ffdd770"
+dependencies = [
+ "num-traits",
 ]
 
 [[package]]

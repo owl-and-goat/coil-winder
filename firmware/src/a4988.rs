@@ -21,10 +21,19 @@ const PIO_TARGET_HZ: u32 =
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 pub struct StepsPerSecond(pub u32);
 
+/// The number of instructions per loop of the pio program. Gives a fixed overhead to the incoming
+/// "sleeps per cycle" count
+const LOOP_OVERHEAD: u32 = 4;
+
 impl StepsPerSecond {
     fn to_sleep_cyles_per_step(self) -> u32 {
         // TODO(aspen): division error?? probably doesn't matter?
-        PIO_TARGET_HZ / self.0
+        if self.0 == 0 {
+            // This doesn't matter (we get 0 speed if we aren't moving), so we return Big Safe
+            // Number
+            return PIO_TARGET_HZ;
+        }
+        (PIO_TARGET_HZ / self.0).saturating_sub(LOOP_OVERHEAD)
     }
 }
 

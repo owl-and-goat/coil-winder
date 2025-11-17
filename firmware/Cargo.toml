@@ -48,6 +48,7 @@ picoserve = { version = "0.17.1", features = ["defmt", "embassy"] }
 
 # Local dependencies
 gcode = { path = "../gcode" }
+fixed-sqrt = "0.3.0"
 
 [profile.release]
 debug = 2
