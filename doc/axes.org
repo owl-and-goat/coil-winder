@@ -21,3 +21,15 @@
   - dir: pin 15
 
 positive is at the front right corner if the spindle is at the back right
+
+* X-Axis Motor Sync
+
+really just so we don't have to screw this up if we take this apart and
+reassemble it.
+
+- motor with colored wires: from left, red, green, yellow, blue (corresponding to
+  2B, 2A, 1A, 1B)
+- motor with ribbon: plug ribbon in in the same orientation as it comes out of
+  the motor (with the non-shaft end of the motor up).
+
+this should align everyone nicely.
