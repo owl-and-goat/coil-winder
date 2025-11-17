@@ -19,3 +19,5 @@
 - *C*
   - step: pin 14
   - dir: pin 15
+
+positive is at the front right corner if the spindle is at the back right
