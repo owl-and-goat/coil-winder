@@ -1,5 +1,5 @@
 .program home_x
-    mov x, 0
+    set x, 0
 loop:
     set pins, 1 [3]
     set pins, 0
