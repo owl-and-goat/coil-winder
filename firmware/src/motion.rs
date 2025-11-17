@@ -1,17 +1,19 @@
 use az::SaturatingCast;
-use defmt::info;
 use embassy_rp::pio;
 use embassy_sync::{blocking_mutex::raw::RawMutex, channel};
 use embassy_time::Timer;
 use fixed::{types::extra::U10, FixedI32};
 use gcode::{Command, UCoord};
 
-use crate::{a4988, util::ArrayZipWith};
+use crate::{
+    a4988::{self, StepsPerSecond},
+    util::ArrayZipWith,
+};
 
 type ICoord = FixedI32<U10>;
 
 // 6 microns per step based on hardware configuration
-const MICRONS_PER_STEP: ICoord = ICoord::lit("6.3");
+const MICRONS_PER_STEP: ICoord = ICoord::lit("6");
 
 fn diff(coord1: UCoord, coord2: UCoord) -> ICoord {
     if coord1 > coord2 {
@@ -41,9 +43,14 @@ impl<const AXES: usize> State<AXES> {
         }
     }
 
-    pub async fn run<const SM: usize, const BUFFER_SIZE: usize>(
+    pub async fn run<
+        const BUFFER_SIZE: usize,
+        const XSM: usize,
+        const CSM: usize,
+        const ZSM: usize,
+    >(
         mut self,
-        mut driver: a4988::Driver<'static, impl pio::Instance, SM>,
+        mut driver: a4988::Driver<'static, impl pio::Instance, XSM, CSM, ZSM>,
         command_rx: channel::Receiver<'static, impl RawMutex, Command<AXES>, BUFFER_SIZE>,
     ) -> ! {
         loop {
@@ -67,8 +74,17 @@ impl<const AXES: usize> State<AXES> {
                             }
                             None => p1.saturating_cast(),
                         });
-                    let steps = mm_to_steps(dist[0]);
-                    driver.step(steps).await;
+                    const TMP_SPEED: StepsPerSecond = StepsPerSecond(2_000);
+                    driver
+                        .do_move(
+                            [
+                                mm_to_steps(dist[0]),
+                                mm_to_steps(dist[1]),
+                                mm_to_steps(dist[2]),
+                            ],
+                            [TMP_SPEED; 3],
+                        )
+                        .await;
                 }
                 Command::Park(_) => {}
                 Command::Home => {}

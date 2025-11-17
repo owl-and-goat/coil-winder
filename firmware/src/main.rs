@@ -37,7 +37,7 @@ const WIFI_NETWORK: Option<&str> = option_env!("WIFI_NETWORK");
 const WIFI_PASSWORD: Option<&str> = option_env!("WIFI_PASSWORD");
 const PORT: u16 = 1234;
 const AXES: usize = 4;
-const AXIS_LABELS: [char; AXES] = ['X', 'Y', 'Z', 'F'];
+const AXIS_LABELS: [char; AXES] = ['X', 'Z', 'C', 'F'];
 pub const COMMAND_BUFFER_SIZE: usize = 32;
 
 bind_interrupts!(struct Irqs {
@@ -113,31 +113,21 @@ async fn server_task(
                         Err(gcode::Error::Incomplete(_)) => continue 'read_command,
                         Err(gcode::Error::ParseFailed) => {
                             warn!("parse failed");
+                            if let Err(e) = socket.write_all(b"wtf!\n").await {
+                                warn!("write error: {}", e);
+                                continue 'accept;
+                            }
                             continue 'accept;
                         }
                     };
                 }
             };
 
-            match &command {
-                gcode::Command::RapidMove(pos) | gcode::Command::LinearMove(pos)
-                    if pos.0.iter().filter(|p| p.is_some()).count() == 1 =>
-                {
-                    blink_once(&mut control).await;
-                    command_tx.send(command).await;
-                    if let Err(e) = socket.write_all(b"gotcha!\n").await {
-                        warn!("write error: {}", e);
-                        continue 'accept;
-                    }
-                }
-                _ => {
-                    blink_once(&mut control).await;
-                    blink_once(&mut control).await;
-                    if let Err(e) = socket.write_all(b"huh??\n").await {
-                        warn!("write error: {}", e);
-                        continue 'accept;
-                    }
-                }
+            blink_once(&mut control).await;
+            command_tx.send(command).await;
+            if let Err(e) = socket.write_all(b"gotcha!\n").await {
+                warn!("write error: {}", e);
+                continue 'accept;
             }
         }
     }
@@ -147,7 +137,7 @@ async fn server_task(
 #[embassy_executor::task]
 async fn motion_task(
     motion: motion::State<AXES>,
-    driver: a4988::Driver<'static, PIO0, 1>,
+    driver: a4988::Driver<'static, PIO0, 1, 2, 3>,
     command_rx: channel::Receiver<
         'static,
         CriticalSectionRawMutex,
@@ -250,14 +240,30 @@ fn main() -> ! {
     // ])
     // .build();
 
-    let prg = a4988::Program::new(&mut pio.common);
+    let prgs = a4988::Programs::new(&mut pio.common);
     let driver = a4988::Driver::new(
-        &mut pio.common,
-        pio.sm1,
-        pio.irq1,
-        /* step_pin */ p.PIN_14,
-        /* dir_pin */ p.PIN_15,
-        &prg,
+        pio.common,
+        a4988::config::Axes {
+            x_axis: a4988::config::Axis {
+                step: p.PIN_10,
+                dir: p.PIN_11,
+                irq: pio.irq1,
+                sm: pio.sm1,
+            },
+            z_axis: a4988::config::Axis {
+                step: p.PIN_12,
+                dir: p.PIN_13,
+                irq: pio.irq2,
+                sm: pio.sm2,
+            },
+            c_axis: a4988::config::Axis {
+                step: p.PIN_14,
+                dir: p.PIN_15,
+                irq: pio.irq3,
+                sm: pio.sm3,
+            },
+        },
+        &prgs,
     );
 
     static COMMAND_CHANNEL: StaticCell<
