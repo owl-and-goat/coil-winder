@@ -38,6 +38,8 @@ pub enum Command<const AXES: usize> {
     // M-codes
     /// M0
     Stop,
+    /// M17
+    EnableAllSteppers,
     /// M18
     DisableAllSteppers,
 }

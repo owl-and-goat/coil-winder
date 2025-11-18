@@ -135,6 +135,7 @@ pub fn command<const AXES: usize>(
             non_empty_upos_g_command("1", coord_labels, Command::LinearMove),
             dwell,
             value(Command::Stop, m("0")),
+            value(Command::EnableAllSteppers, m("17")),
             value(Command::DisableAllSteppers, m("18")),
         ))
         .parse(i)
@@ -213,6 +214,13 @@ mod tests {
         let (rem, res) = command(XYZF)(b"M0").unwrap();
         assert_eq!(rem, b"");
         assert_eq!(res, Command::Stop);
+    }
+
+    #[test]
+    fn m17_enable_all_steppers() {
+        let (rem, res) = command(XYZF)(b"M17").unwrap();
+        assert_eq!(rem, b"");
+        assert_eq!(res, Command::EnableAllSteppers);
     }
 
     #[test]
