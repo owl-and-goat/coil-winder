@@ -126,7 +126,17 @@ async fn server_task(
             };
 
             blink_once(&mut control).await;
-            command_tx.send(command).await;
+
+            match command {
+                gcode::Command::Stop => {
+                    // TODO(aspen): Also cancel the current command
+                    command_tx.clear();
+                }
+                command => {
+                    command_tx.send(command).await;
+                }
+            }
+
             if let Err(e) = socket.write_all(b"gotcha!\n").await {
                 warn!("write error: {}", e);
                 continue 'accept;
