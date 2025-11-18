@@ -9,6 +9,7 @@
 #+attr_org: :width 1000
 [[file:./pico-2-r4-pinout.svg]]
 
+- sleep (all axes): pin 9
 
 - *X*
   - step: pin 10

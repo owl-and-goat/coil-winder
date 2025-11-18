@@ -245,6 +245,7 @@ fn main() -> ! {
     let prgs = a4988::Programs::new(&mut pio.common);
     let driver = a4988::Driver::new(
         pio.common,
+        /* sleep_pin = */ p.PIN_9,
         a4988::config::Axes {
             x_axis: a4988::config::Axis {
                 step: p.PIN_10,

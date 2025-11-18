@@ -83,6 +83,7 @@ pub mod config {
 
 pub struct Driver<'d, T: pio::Instance, const XSM: usize, const ZSM: usize, const CSM: usize> {
     pio: pio::Common<'d, T>,
+    sleep_pin: Output<'d>,
     dir_pins: [Output<'d>; 3],
     irqs: (
         pio::Irq<'d, T, XSM>,
@@ -101,7 +102,8 @@ impl<'d, T: pio::Instance, const XSM: usize, const ZSM: usize, const CSM: usize>
 {
     pub fn new<XD: gpio::Pin, XS: PioPin, ZD: gpio::Pin, ZS: PioPin, CD: gpio::Pin, CS: PioPin>(
         mut pio: pio::Common<'d, T>,
-        pins: config::Axes<'d, T, XD, XS, XSM, CD, CS, CSM, ZD, ZS, ZSM>,
+        sleep_pin: Peri<'d, impl gpio::Pin>,
+        axes: config::Axes<'d, T, XD, XS, XSM, CD, CS, CSM, ZD, ZS, ZSM>,
         programs: &Programs<'d, T>,
     ) -> Self {
         let clock_divider = calculate_pio_clock_divider(PIO_TARGET_HZ);
@@ -129,18 +131,26 @@ impl<'d, T: pio::Instance, const XSM: usize, const ZSM: usize, const CSM: usize>
         }
 
         let (xsm, xirq, xdir) =
-            configure_pio(&mut pio, pins.x_axis, clock_divider, &programs.steps);
+            configure_pio(&mut pio, axes.x_axis, clock_divider, &programs.steps);
         let (zsm, zirq, zdir) =
-            configure_pio(&mut pio, pins.z_axis, clock_divider, &programs.steps);
+            configure_pio(&mut pio, axes.z_axis, clock_divider, &programs.steps);
         let (csm, cirq, cdir) =
-            configure_pio(&mut pio, pins.c_axis, clock_divider, &programs.steps);
+            configure_pio(&mut pio, axes.c_axis, clock_divider, &programs.steps);
+
+        let sleep_pin = Output::new(sleep_pin, Level::Low);
 
         Self {
             pio,
+            sleep_pin,
             dir_pins: [xdir, zdir, cdir],
             irqs: (xirq, zirq, cirq),
             sms: (xsm, zsm, csm),
         }
+    }
+
+    pub async fn set_sleep(&mut self, sleep: bool) {
+        self.sleep_pin
+            .set_level(if sleep { Level::Low } else { Level::High });
     }
 
     pub async fn do_move(&mut self, steps: [i32; 3], speeds: [StepsPerSecond; 3]) {

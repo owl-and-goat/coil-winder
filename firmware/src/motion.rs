@@ -79,6 +79,8 @@ impl State {
                 Command::Dwell(duration) => {
                     Timer::after_millis(duration.as_millis() as _).await;
                 }
+                Command::EnableAllSteppers => driver.set_sleep(false).await,
+                Command::DisableAllSteppers => driver.set_sleep(true).await,
                 Command::RapidMove(target_pos) | Command::LinearMove(target_pos) => {
                     if let Some(feedrate) = target_pos.0[3 /* feedrate is the last axis */] {
                         self.feedrate = MillimetersPerSecond(feedrate);
@@ -159,7 +161,6 @@ impl State {
                 }
                 Command::Park(_) => {}
                 Command::Home => {}
-                Command::DisableAllSteppers => {}
             }
         }
     }
