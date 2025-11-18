@@ -137,6 +137,7 @@ pub fn command<const AXES: usize>(
             value(Command::Stop, m("0")),
             value(Command::EnableAllSteppers, m("17")),
             value(Command::DisableAllSteppers, m("18")),
+            value(Command::Home, g("28")),
         ))
         .parse(i)
     }
@@ -228,5 +229,12 @@ mod tests {
         let (rem, res) = command(XYZF)(b"M18").unwrap();
         assert_eq!(rem, b"");
         assert_eq!(res, Command::DisableAllSteppers);
+    }
+
+    #[test]
+    fn g28_home() {
+        let (rem, res) = command(XYZF)(b"G28").unwrap();
+        assert_eq!(rem, b"");
+        assert_eq!(res, Command::Home);
     }
 }
