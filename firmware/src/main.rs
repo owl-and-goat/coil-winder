@@ -14,8 +14,9 @@ use embassy_rp::{
     clocks::RoscRng,
     gpio::{Level, Output},
     multicore::Stack,
-    peripherals::{DMA_CH0, PIO0},
+    peripherals::{DMA_CH0, PIN_0, PIO0},
     pio::{InterruptHandler, Pio},
+    Peri,
 };
 use embassy_sync::{
     blocking_mutex::raw::CriticalSectionRawMutex,
@@ -249,23 +250,26 @@ fn main() -> ! {
             x_axis: driver::config::Axis {
                 step: p.PIN_10,
                 dir: p.PIN_11,
+                zero_limit: Some(p.PIN_6),
                 irq: pio.irq1,
                 sm: pio.sm1,
             },
             z_axis: driver::config::Axis {
                 step: p.PIN_12,
                 dir: p.PIN_13,
+                zero_limit: Some(p.PIN_7),
                 irq: pio.irq2,
                 sm: pio.sm2,
             },
             c_axis: driver::config::Axis {
                 step: p.PIN_14,
                 dir: p.PIN_15,
+                zero_limit: None::</* can put anything here, lol */ Peri<PIN_0>>,
                 irq: pio.irq3,
                 sm: pio.sm3,
             },
         },
-        &prgs,
+        prgs,
     );
 
     static COMMAND_CHANNEL: StaticCell<

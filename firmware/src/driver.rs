@@ -3,16 +3,14 @@
 use core::cmp::Ordering;
 
 use defmt::info;
-use embassy_futures::join::join3;
+use embassy_futures::join::{join, join3};
 use embassy_rp::{
-    gpio::{self, Level, Output},
+    gpio::{self, Level, Pull},
     pio::{self, PioPin},
     pio_programs::clock_divider::calculate_pio_clock_divider,
     Peri,
 };
 use fixed::types::extra::U8;
-
-use crate::util::OnDrop;
 
 const PIO_TARGET_HZ: u32 =
     // 2 μs per cycle
@@ -55,9 +53,13 @@ pub mod config {
     use super::*;
     use embassy_rp::{gpio, pio::PioPin};
 
-    pub struct Axis<'d, T: pio::Instance, D: gpio::Pin, S: PioPin, const SM: usize> {
+    pub struct Axis<'d, T: pio::Instance, D: gpio::Pin, S: PioPin, ZL: PioPin, const SM: usize> {
+        /// Direction pin
         pub dir: Peri<'d, D>,
+        /// Step pin
         pub step: Peri<'d, S>,
+        /// Zero limit switch input pin
+        pub zero_limit: Option<Peri<'d, ZL>>,
         pub irq: pio::Irq<'d, T, SM>,
         pub sm: pio::StateMachine<'d, T, SM>,
     }
@@ -67,85 +69,191 @@ pub mod config {
         T: pio::Instance,
         XD: gpio::Pin,
         XS: PioPin,
+        XZL: PioPin,
         const XSM: usize,
         ZD: gpio::Pin,
         ZS: PioPin,
+        ZZL: PioPin,
         const ZSM: usize,
         CD: gpio::Pin,
         CS: PioPin,
+        CZL: PioPin,
         const CSM: usize,
     > {
-        pub x_axis: Axis<'d, T, XD, XS, XSM>,
-        pub z_axis: Axis<'d, T, ZD, ZS, ZSM>,
-        pub c_axis: Axis<'d, T, CD, CS, CSM>,
+        pub x_axis: Axis<'d, T, XD, XS, XZL, XSM>,
+        pub z_axis: Axis<'d, T, ZD, ZS, ZZL, ZSM>,
+        pub c_axis: Axis<'d, T, CD, CS, CZL, CSM>,
     }
+}
+
+struct Axis<'d, T: pio::Instance, const SM: usize> {
+    sm: pio::StateMachine<'d, T, SM>,
+    irq: pio::Irq<'d, T, SM>,
+    dir_pin: gpio::Output<'d>,
+    step_pin: pio::Pin<'d, T>,
+    zero_limit_pin: Option<pio::Pin<'d, T>>,
+}
+
+impl<'d, T: pio::Instance, const SM: usize> Axis<'d, T, SM> {
+    pub fn new(
+        pio: &mut pio::Common<'d, T>,
+        axis: config::Axis<'d, T, impl gpio::Pin, impl PioPin, impl PioPin, SM>,
+    ) -> Self {
+        let config::Axis {
+            mut sm,
+            step,
+            zero_limit,
+            dir,
+            irq,
+        } = axis;
+
+        let step_pin = pio.make_pio_pin(step);
+        sm.set_pin_dirs(pio::Direction::Out, &[&step_pin]);
+
+        let zero_limit_pin = zero_limit.map(|zero_limit| {
+            let mut zero_limit_pin = pio.make_pio_pin(zero_limit);
+            zero_limit_pin.set_pull(Pull::Up);
+            zero_limit_pin.set_schmitt(true);
+            sm.set_pin_dirs(pio::Direction::In, &[&zero_limit_pin]);
+            zero_limit_pin
+        });
+
+        sm.set_enable(false);
+
+        Self {
+            sm: sm,
+            irq: irq,
+            dir_pin: gpio::Output::new(dir, Level::Low),
+            step_pin,
+            zero_limit_pin,
+        }
+    }
+
+    pub fn configure(
+        &mut self,
+        clock_divider: fixed::FixedU32<U8>,
+        program: &pio::LoadedProgram<'d, T>,
+    ) {
+        let mut cfg = pio::Config::default();
+        cfg.set_set_pins(&[&self.step_pin]);
+
+        if let Some(zero_limit_pin) = &self.zero_limit_pin {
+            cfg.set_in_pins(&[zero_limit_pin]);
+        }
+
+        cfg.clock_divider = clock_divider;
+        cfg.use_program(&program, &[]);
+        self.sm.set_config(&cfg);
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum ConfiguredProgram {
+    Home,
+    Steps,
 }
 
 pub struct Driver<'d, T: pio::Instance, const XSM: usize, const ZSM: usize, const CSM: usize> {
     pio: pio::Common<'d, T>,
-    sleep_pin: Output<'d>,
-    dir_pins: [Output<'d>; 3],
-    irqs: (
-        pio::Irq<'d, T, XSM>,
-        pio::Irq<'d, T, ZSM>,
-        pio::Irq<'d, T, CSM>,
-    ),
-    sms: (
-        pio::StateMachine<'d, T, XSM>,
-        pio::StateMachine<'d, T, ZSM>,
-        pio::StateMachine<'d, T, CSM>,
-    ),
+    sleep_pin: gpio::Output<'d>,
+    axes: (Axis<'d, T, XSM>, Axis<'d, T, ZSM>, Axis<'d, T, CSM>),
+    configured_program: Option<ConfiguredProgram>,
+    programs: Programs<'d, T>,
+    clock_divider: fixed::FixedU32<U8>,
+}
+
+macro_rules! axis {
+    ($driver: expr, $i: expr, |$axis: ident| $body: expr) => {
+        match $i {
+            0 => {
+                let $axis = &mut $driver.axes.0;
+                $body
+            }
+            1 => {
+                let $axis = &mut $driver.axes.1;
+                $body
+            }
+            2 => {
+                let $axis = &mut $driver.axes.2;
+                $body
+            }
+            _ => unreachable!(),
+        }
+    };
+}
+
+macro_rules! each_axis {
+    ($self: expr, |$i:tt, $axis:ident|  $body:block ) => {{
+        let $i = 0;
+        let $axis = &mut $self.axes.0;
+        $body;
+    }
+    {
+        let $i = 1;
+        let $axis = &mut $self.axes.1;
+        $body;
+    }
+    {
+        let $i = 2;
+        let $axis = &mut $self.axes.2;
+        $body;
+    }};
 }
 
 impl<'d, T: pio::Instance, const XSM: usize, const ZSM: usize, const CSM: usize>
-    Driver<'d, T, XSM, CSM, ZSM>
+    Driver<'d, T, XSM, ZSM, CSM>
 {
-    pub fn new<XD: gpio::Pin, XS: PioPin, ZD: gpio::Pin, ZS: PioPin, CD: gpio::Pin, CS: PioPin>(
+    pub fn new<
+        XD: gpio::Pin,
+        XS: PioPin,
+        XZL: PioPin,
+        ZD: gpio::Pin,
+        ZS: PioPin,
+        ZZL: PioPin,
+        CD: gpio::Pin,
+        CS: PioPin,
+        CZL: PioPin,
+    >(
         mut pio: pio::Common<'d, T>,
         sleep_pin: Peri<'d, impl gpio::Pin>,
-        axes: config::Axes<'d, T, XD, XS, XSM, CD, CS, CSM, ZD, ZS, ZSM>,
-        programs: &Programs<'d, T>,
+        axes: config::Axes<'d, T, XD, XS, XZL, XSM, ZD, ZS, ZZL, ZSM, CD, CS, CZL, CSM>,
+        programs: Programs<'d, T>,
     ) -> Self {
         let clock_divider = calculate_pio_clock_divider(PIO_TARGET_HZ);
 
-        fn configure_pio<'d, T: pio::Instance, const SM: usize>(
-            pio: &mut pio::Common<'d, T>,
-            mut axis: config::Axis<'d, T, impl gpio::Pin, impl PioPin, SM>,
-            clock_divider: fixed::FixedU32<U8>,
-            program: &pio::LoadedProgram<'d, T>,
-        ) -> (
-            pio::StateMachine<'d, T, SM>,
-            pio::Irq<'d, T, SM>,
-            Output<'d>,
-        ) {
-            let pin = pio.make_pio_pin(axis.step);
-            axis.sm.set_pin_dirs(pio::Direction::Out, &[&pin]);
+        let axes = (
+            Axis::new(&mut pio, axes.x_axis),
+            Axis::new(&mut pio, axes.z_axis),
+            Axis::new(&mut pio, axes.c_axis),
+        );
 
-            let mut cfg = pio::Config::default();
-            cfg.set_set_pins(&[&pin]);
-            cfg.clock_divider = clock_divider;
-            cfg.use_program(&program, &[]);
-            axis.sm.set_config(&cfg);
-            axis.sm.set_enable(false);
-            (axis.sm, axis.irq, Output::new(axis.dir, Level::Low))
-        }
-
-        let (xsm, xirq, xdir) =
-            configure_pio(&mut pio, axes.x_axis, clock_divider, &programs.steps);
-        let (zsm, zirq, zdir) =
-            configure_pio(&mut pio, axes.z_axis, clock_divider, &programs.steps);
-        let (csm, cirq, cdir) =
-            configure_pio(&mut pio, axes.c_axis, clock_divider, &programs.steps);
-
-        let sleep_pin = Output::new(sleep_pin, Level::Low);
+        let sleep_pin = gpio::Output::new(sleep_pin, Level::Low);
 
         Self {
             pio,
             sleep_pin,
-            dir_pins: [xdir, zdir, cdir],
-            irqs: (xirq, zirq, cirq),
-            sms: (xsm, zsm, csm),
+            axes,
+            configured_program: None,
+            clock_divider,
+            programs,
         }
+    }
+
+    fn configure_pio(&mut self, which_program: ConfiguredProgram) {
+        if self.configured_program == Some(which_program) {
+            return;
+        }
+
+        let program = match which_program {
+            ConfiguredProgram::Home => &self.programs.home,
+            ConfiguredProgram::Steps => &self.programs.steps,
+        };
+
+        each_axis!(self, |_i, axis| {
+            axis.configure(self.clock_divider, program);
+        });
+
+        self.configured_program = Some(which_program);
     }
 
     pub async fn set_sleep(&mut self, sleep: bool) {
@@ -153,83 +261,81 @@ impl<'d, T: pio::Instance, const XSM: usize, const ZSM: usize, const CSM: usize>
             .set_level(if sleep { Level::Low } else { Level::High });
     }
 
+    pub async fn home(&mut self, speeds: impl IntoIterator<Item = StepsPerSecond>) {
+        self.configure_pio(ConfiguredProgram::Home);
+
+        let mut speeds = speeds.into_iter();
+        each_axis!(self, |_, axis| {
+            if axis.zero_limit_pin.is_some() {
+                axis.dir_pin.set_low();
+                axis.sm
+                    .tx()
+                    .wait_push(speeds.next().unwrap().to_sleep_cyles_per_step())
+                    .await;
+            }
+        });
+
+        self.pio.apply_sm_batch(|batch| {
+            each_axis!(self, |_, axis| {
+                if axis.zero_limit_pin.is_some() {
+                    batch.restart(&mut axis.sm);
+                    batch.set_enable(&mut axis.sm, true);
+                }
+            });
+        });
+
+        join(self.axes.0.irq.wait(), self.axes.1.irq.wait()).await;
+    }
+
     pub async fn do_move(&mut self, steps: [i32; 3], speeds: [StepsPerSecond; 3]) {
+        self.configure_pio(ConfiguredProgram::Steps);
+
         for (i, steps) in steps.into_iter().enumerate() {
             match steps.cmp(&0) {
                 Ordering::Less => {
-                    self.dir_pins[i].set_low();
+                    axis!(self, i, |axis| axis.dir_pin.set_low());
                 }
                 Ordering::Equal => {}
                 Ordering::Greater => {
-                    self.dir_pins[i].set_high();
+                    axis!(self, i, |axis| axis.dir_pin.set_high());
                 }
             }
         }
 
-        macro_rules! each_sm {
-            (|$i:tt, $sm:ident|  $body:block ) => {{
-                let $i = 0;
-                let $sm = &mut self.sms.0;
-                $body;
-            }
-            {
-                let $i = 1;
-                let $sm = &mut self.sms.1;
-                $body;
-            }
-            {
-                let $i = 2;
-                let $sm = &mut self.sms.2;
-                $body;
-            }};
-        }
-
-        each_sm!(|i, sm| {
+        each_axis!(self, |i, axis| {
             let steps = steps[i].unsigned_abs();
             let sleeps = speeds[i].to_sleep_cyles_per_step();
 
             info!("axis={} steps={} sleeps={}", i, steps, sleeps);
             // corresponds to [pull block] instructions in steps.s
-            sm.tx().wait_push(steps).await;
-            sm.tx().wait_push(sleeps).await;
+            axis.sm.tx().wait_push(steps).await;
+            axis.sm.tx().wait_push(sleeps).await;
         });
 
         self.pio.apply_sm_batch(|batch| {
-            each_sm!(|_, sm| {
-                batch.restart(sm);
-                batch.set_enable(sm, true);
-            });
-        });
-
-        let drop = OnDrop::new(|| {
-            each_sm!(|_, sm| {
-                sm.clear_fifos();
-                unsafe {
-                    sm.exec_instr(
-                        ::pio::InstructionOperands::JMP {
-                            address: 0,
-                            condition: ::pio::JmpCondition::Always,
-                        }
-                        .encode(),
-                    );
-                }
+            each_axis!(self, |_, axis| {
+                batch.restart(&mut axis.sm);
+                batch.set_enable(&mut axis.sm, true);
             });
         });
 
         info!("waiting on irqs");
-        join3(self.irqs.0.wait(), self.irqs.1.wait(), self.irqs.2.wait()).await;
+        join3(
+            self.axes.0.irq.wait(),
+            self.axes.1.irq.wait(),
+            self.axes.2.irq.wait(),
+        )
+        .await;
         info!("done");
 
-        drop.defuse();
-
         self.pio.apply_sm_batch(|batch| {
-            each_sm!(|_, sm| {
-                batch.set_enable(sm, false);
+            each_axis!(self, |_, axis| {
+                batch.set_enable(&mut axis.sm, false);
             });
         });
         self.pio.apply_sm_batch(|batch| {
-            each_sm!(|_, sm| {
-                batch.restart(sm);
+            each_axis!(self, |_, axis| {
+                batch.restart(&mut axis.sm);
             });
         });
     }

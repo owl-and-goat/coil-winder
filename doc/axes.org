@@ -14,9 +14,11 @@
 - *X*
   - step: pin 10
   - dir: pin 11
+  - zero limit: pin 6
 - *Z*
   - step: pin 12
   - dir: pin 13
+  - zero limit: pin 7
 - *C*
   - step: pin 14
   - dir: pin 15

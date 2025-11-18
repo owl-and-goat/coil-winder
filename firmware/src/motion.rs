@@ -90,6 +90,13 @@ impl State {
                         *coord = UCoord::ZERO;
                     }
                 }
+                Command::Home => {
+                    let speed = [MillimetersPerSecond(UCoord::lit("10")); 3]
+                        .zip_with(self.axis_speeds, |speed, axis_speed| {
+                            speed.to_steps_per_second(axis_speed)
+                        });
+                    driver.home(speed).await;
+                }
                 Command::RapidMove(target_pos) | Command::LinearMove(target_pos) => {
                     if let Some(feedrate) = target_pos.0[3 /* feedrate is the last axis */] {
                         self.feedrate = MillimetersPerSecond(feedrate);
@@ -169,7 +176,6 @@ impl State {
                     driver.do_move(steps, speed).await;
                 }
                 Command::Park(_) => {}
-                Command::Home => {}
             }
         }
     }

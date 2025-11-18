@@ -1,9 +1,11 @@
 use core::mem::{self, MaybeUninit};
 
+#[allow(dead_code)] // maybe we'll use this someday
 pub struct OnDrop<F: FnOnce()> {
     f: MaybeUninit<F>,
 }
 
+#[allow(dead_code)] // maybe we'll use this someday
 impl<F: FnOnce()> OnDrop<F> {
     pub fn new(f: F) -> Self {
         Self {
