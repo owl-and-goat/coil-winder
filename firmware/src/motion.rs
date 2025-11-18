@@ -80,7 +80,16 @@ impl State {
                     Timer::after_millis(duration.as_millis() as _).await;
                 }
                 Command::EnableAllSteppers => driver.set_sleep(false).await,
-                Command::DisableAllSteppers => driver.set_sleep(true).await,
+                Command::DisableAllSteppers => {
+                    driver.set_sleep(true).await;
+
+                    // If we disable the motors, we have to assume we don't know where we are
+                    // anymore
+                    self.is_homed = false;
+                    for coord in self.position.each_mut() {
+                        *coord = UCoord::ZERO;
+                    }
+                }
                 Command::RapidMove(target_pos) | Command::LinearMove(target_pos) => {
                     if let Some(feedrate) = target_pos.0[3 /* feedrate is the last axis */] {
                         self.feedrate = MillimetersPerSecond(feedrate);
