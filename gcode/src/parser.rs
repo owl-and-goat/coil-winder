@@ -7,7 +7,7 @@ use nom::{
     branch::alt,
     bytes::{complete::take_while1, streaming::tag},
     character::{complete::multispace1, streaming::char},
-    combinator::{map, map_res, opt},
+    combinator::{map, map_res, opt, value},
     error::ErrorKind,
     number::complete::recognize_float,
     sequence::preceded,
@@ -70,6 +70,14 @@ pub fn g(code: &str) -> impl Fn(&[u8]) -> IResult<&[u8], ()> {
     }
 }
 
+pub fn m(code: &str) -> impl Fn(&[u8]) -> IResult<&[u8], ()> {
+    move |i| {
+        let (i, _) = char('M')(i)?;
+        let (i, _) = tag(code)(i)?;
+        Ok((i, ()))
+    }
+}
+
 pub fn upos_g_command<const AXES: usize>(
     g_code: &str,
     coord_labels: [char; AXES],
@@ -126,6 +134,8 @@ pub fn command<const AXES: usize>(
             non_empty_upos_g_command("0", coord_labels, Command::RapidMove),
             non_empty_upos_g_command("1", coord_labels, Command::LinearMove),
             dwell,
+            value(Command::Stop, m("0")),
+            value(Command::DisableAllSteppers, m("18")),
         ))
         .parse(i)
     }
@@ -196,5 +206,19 @@ mod tests {
         let (rem, res) = command(XYZF)(b"G4 P123").unwrap();
         assert_eq!(rem, b"");
         assert_eq!(res, Command::Dwell(Duration::from_millis(123)));
+    }
+
+    #[test]
+    fn m0_stop() {
+        let (rem, res) = command(XYZF)(b"M0").unwrap();
+        assert_eq!(rem, b"");
+        assert_eq!(res, Command::Stop);
+    }
+
+    #[test]
+    fn m18_disable_all_steppers() {
+        let (rem, res) = command(XYZF)(b"M18").unwrap();
+        assert_eq!(rem, b"");
+        assert_eq!(res, Command::DisableAllSteppers);
     }
 }
