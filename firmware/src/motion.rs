@@ -8,7 +8,7 @@ use fixed_sqrt::FastSqrt;
 use gcode::{Command, UCoord};
 
 use crate::{
-    a4988::{self, StepsPerSecond},
+    driver::{self, StepsPerSecond},
     util::ArrayZipWith,
 };
 
@@ -64,7 +64,7 @@ impl State {
         const ZSM: usize,
     >(
         mut self,
-        mut driver: a4988::Driver<'static, impl pio::Instance, XSM, CSM, ZSM>,
+        mut driver: driver::Driver<'static, impl pio::Instance, XSM, CSM, ZSM>,
         command_rx: channel::Receiver<
             'static,
             impl RawMutex,

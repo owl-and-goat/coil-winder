@@ -31,7 +31,7 @@ use crate::motion::{ICoord, MicronsPerStep};
 
 use {defmt_rtt as _, panic_probe as _};
 
-mod a4988;
+mod driver;
 mod motion;
 pub(crate) mod util;
 
@@ -149,7 +149,7 @@ async fn server_task(
 #[embassy_executor::task]
 async fn motion_task(
     motion: motion::State,
-    driver: a4988::Driver<'static, PIO0, 1, 2, 3>,
+    driver: driver::Driver<'static, PIO0, 1, 2, 3>,
     command_rx: channel::Receiver<
         'static,
         CriticalSectionRawMutex,
@@ -216,7 +216,6 @@ async fn core0(
         info!("join failed with status={}", err.status);
     }
 
-    // let control = make_static!(Mutex<NoopRawMutex, Control>, Mutex::new(control));
     spawner.must_spawn(server_task(stack, control, command_tx));
 }
 
@@ -242,34 +241,24 @@ fn main() -> ! {
         p.DMA_CH0,
     );
 
-    // let driver = a4988::Driver::builder()
-    //     .direction_pin(p.PIN_15)
-    // .step_axis_pins([
-    //     Output::new(p.PIN_16, Level::Low),
-    // Output::new(p.PIN_17, Level::Low),
-    // Output::new(p.PIN_18, Level::Low),
-    // Output::new(p.PIN_19, Level::Low),
-    // ])
-    // .build();
-
-    let prgs = a4988::Programs::new(&mut pio.common);
-    let driver = a4988::Driver::new(
+    let prgs = driver::Programs::new(&mut pio.common);
+    let driver = driver::Driver::new(
         pio.common,
         /* sleep_pin = */ p.PIN_9,
-        a4988::config::Axes {
-            x_axis: a4988::config::Axis {
+        driver::config::Axes {
+            x_axis: driver::config::Axis {
                 step: p.PIN_10,
                 dir: p.PIN_11,
                 irq: pio.irq1,
                 sm: pio.sm1,
             },
-            z_axis: a4988::config::Axis {
+            z_axis: driver::config::Axis {
                 step: p.PIN_12,
                 dir: p.PIN_13,
                 irq: pio.irq2,
                 sm: pio.sm2,
             },
-            c_axis: a4988::config::Axis {
+            c_axis: driver::config::Axis {
                 step: p.PIN_14,
                 dir: p.PIN_15,
                 irq: pio.irq3,
