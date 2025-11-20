@@ -138,7 +138,7 @@ impl<'d, T: pio::Instance, const SM: usize> Axis<'d, T, SM> {
         cfg.set_set_pins(&[&self.step_pin]);
 
         if let Some(zero_limit_pin) = &self.zero_limit_pin {
-            cfg.set_in_pins(&[zero_limit_pin]);
+            cfg.set_jmp_pin(&zero_limit_pin);
         }
 
         cfg.clock_divider = clock_divider;
