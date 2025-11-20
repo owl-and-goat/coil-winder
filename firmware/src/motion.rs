@@ -37,6 +37,8 @@ impl MillimetersPerSecond {
     }
 }
 
+const HOME_SPEED: MillimetersPerSecond = MillimetersPerSecond(UCoord::lit("120"));
+
 const AXES: usize = 3;
 
 pub struct State {
@@ -91,11 +93,14 @@ impl State {
                     }
                 }
                 Command::Home => {
-                    let speed = [MillimetersPerSecond(UCoord::lit("10")); 3]
-                        .zip_with(self.axis_speeds, |speed, axis_speed| {
-                            speed.to_steps_per_second(axis_speed)
-                        });
+                    let speed = [HOME_SPEED; 3].zip_with(self.axis_speeds, |speed, axis_speed| {
+                        speed.to_steps_per_second(axis_speed)
+                    });
                     driver.home(speed).await;
+                    self.is_homed = true;
+                    for coord in self.position.each_mut() {
+                        *coord = UCoord::ZERO;
+                    }
                 }
                 Command::RapidMove(target_pos) | Command::LinearMove(target_pos) => {
                     if let Some(feedrate) = target_pos.0[3 /* feedrate is the last axis */] {

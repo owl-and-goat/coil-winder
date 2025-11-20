@@ -2,7 +2,7 @@
 
 use core::cmp::Ordering;
 
-use defmt::info;
+use defmt::{debug, info};
 use embassy_futures::join::{join, join3};
 use embassy_rp::{
     gpio::{self, Level, Pull},
@@ -262,19 +262,24 @@ impl<'d, T: pio::Instance, const XSM: usize, const ZSM: usize, const CSM: usize>
     }
 
     pub async fn home(&mut self, speeds: impl IntoIterator<Item = StepsPerSecond>) {
+        debug!("homing");
         self.configure_pio(ConfiguredProgram::Home);
 
         let mut speeds = speeds.into_iter();
-        each_axis!(self, |_, axis| {
+
+        each_axis!(self, |i, axis| {
+            let speed = speeds.next().unwrap();
             if axis.zero_limit_pin.is_some() {
+                info!("will home axis {}", i);
                 axis.dir_pin.set_low();
                 axis.sm
                     .tx()
-                    .wait_push(speeds.next().unwrap().to_sleep_cyles_per_step())
+                    .wait_push(speed.to_sleep_cyles_per_step())
                     .await;
             }
         });
 
+        debug!("starting home routine");
         self.pio.apply_sm_batch(|batch| {
             each_axis!(self, |_, axis| {
                 if axis.zero_limit_pin.is_some() {
@@ -285,6 +290,7 @@ impl<'d, T: pio::Instance, const XSM: usize, const ZSM: usize, const CSM: usize>
         });
 
         join(self.axes.0.irq.wait(), self.axes.1.irq.wait()).await;
+        debug!("finished home routine");
     }
 
     pub async fn do_move(&mut self, steps: [i32; 3], speeds: [StepsPerSecond; 3]) {
