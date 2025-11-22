@@ -1,6 +1,7 @@
 .program home_x
 main:
     pull block                  ; osr := sleeps_per_step
+    out pins, 1                 ; write direction bit (LSB of speed)
     mov y, osr                  ; y   := osr (sleeps_per_step)
     set pins, 0                 ; reset pins
 loop:

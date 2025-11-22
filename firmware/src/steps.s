@@ -3,6 +3,7 @@ main:
     pull block    ; osr := steps
     mov x, osr    ; x   := osr (steps)
     pull block    ; osr := sleeps_per_step
+    out pins, 1   ; write direction bit (LSB of speed)
     set pins, 0   ; reset pins
     jmp x-- loop  ; decrement loop counter at start of loop (loops are always do
                   ; while)

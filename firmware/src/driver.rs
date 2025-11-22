@@ -1,7 +1,5 @@
 //! Ref: https://www.allegromicro.com/-/media/files/datasheets/a4988-datasheet.pdf
 
-use core::cmp::Ordering;
-
 use defmt::{debug, info};
 use embassy_futures::join::{join, join3};
 use embassy_rp::{
@@ -18,6 +16,22 @@ const PIO_TARGET_HZ: u32 =
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 pub struct StepsPerSecond(pub u32);
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+pub enum Direction {
+    Forwards,
+    Backwards,
+}
+
+impl From<i32> for Direction {
+    fn from(value: i32) -> Self {
+        if value > 0 {
+            Self::Forwards
+        } else {
+            Self::Backwards
+        }
+    }
+}
 
 /// The number of instructions per loop of the pio program. Gives a fixed overhead to the incoming
 /// "sleeps per cycle" count
@@ -51,9 +65,9 @@ impl<'a, T: pio::Instance> Programs<'a, T> {
 
 pub mod config {
     use super::*;
-    use embassy_rp::{gpio, pio::PioPin};
+    use embassy_rp::pio::PioPin;
 
-    pub struct Axis<'d, T: pio::Instance, D: gpio::Pin, S: PioPin, ZL: PioPin, const SM: usize> {
+    pub struct Axis<'d, T: pio::Instance, D: PioPin, S: PioPin, ZL: PioPin, const SM: usize> {
         /// Direction pin
         pub dir: Peri<'d, D>,
         /// Step pin
@@ -67,15 +81,15 @@ pub mod config {
     pub struct Axes<
         'd,
         T: pio::Instance,
-        XD: gpio::Pin,
+        XD: PioPin,
         XS: PioPin,
         XZL: PioPin,
         const XSM: usize,
-        ZD: gpio::Pin,
+        ZD: PioPin,
         ZS: PioPin,
         ZZL: PioPin,
         const ZSM: usize,
-        CD: gpio::Pin,
+        CD: PioPin,
         CS: PioPin,
         CZL: PioPin,
         const CSM: usize,
@@ -89,7 +103,7 @@ pub mod config {
 struct Axis<'d, T: pio::Instance, const SM: usize> {
     sm: pio::StateMachine<'d, T, SM>,
     irq: pio::Irq<'d, T, SM>,
-    dir_pin: gpio::Output<'d>,
+    dir_pin: pio::Pin<'d, T>,
     step_pin: pio::Pin<'d, T>,
     zero_limit_pin: Option<pio::Pin<'d, T>>,
 }
@@ -97,7 +111,7 @@ struct Axis<'d, T: pio::Instance, const SM: usize> {
 impl<'d, T: pio::Instance, const SM: usize> Axis<'d, T, SM> {
     pub fn new(
         pio: &mut pio::Common<'d, T>,
-        axis: config::Axis<'d, T, impl gpio::Pin, impl PioPin, impl PioPin, SM>,
+        axis: config::Axis<'d, T, impl PioPin, impl PioPin, impl PioPin, SM>,
     ) -> Self {
         let config::Axis {
             mut sm,
@@ -107,8 +121,10 @@ impl<'d, T: pio::Instance, const SM: usize> Axis<'d, T, SM> {
             irq,
         } = axis;
 
+        let dir_pin = pio.make_pio_pin(dir);
         let step_pin = pio.make_pio_pin(step);
-        sm.set_pin_dirs(pio::Direction::Out, &[&step_pin]);
+
+        sm.set_pin_dirs(pio::Direction::Out, &[&step_pin, &dir_pin]);
 
         let zero_limit_pin = zero_limit.map(|zero_limit| {
             let mut zero_limit_pin = pio.make_pio_pin(zero_limit);
@@ -123,7 +139,7 @@ impl<'d, T: pio::Instance, const SM: usize> Axis<'d, T, SM> {
         Self {
             sm: sm,
             irq: irq,
-            dir_pin: gpio::Output::new(dir, Level::Low),
+            dir_pin,
             step_pin,
             zero_limit_pin,
         }
@@ -136,6 +152,7 @@ impl<'d, T: pio::Instance, const SM: usize> Axis<'d, T, SM> {
     ) {
         let mut cfg = pio::Config::default();
         cfg.set_set_pins(&[&self.step_pin]);
+        cfg.set_out_pins(&[&self.dir_pin]);
 
         if let Some(zero_limit_pin) = &self.zero_limit_pin {
             cfg.set_jmp_pin(&zero_limit_pin);
@@ -144,6 +161,18 @@ impl<'d, T: pio::Instance, const SM: usize> Axis<'d, T, SM> {
         cfg.clock_divider = clock_divider;
         cfg.use_program(&program, &[]);
         self.sm.set_config(&cfg);
+    }
+
+    pub(self) async fn push_speed(&mut self, speed: StepsPerSecond, direction: Direction) {
+        let speed = speed.to_sleep_cyles_per_step();
+        // steps.s expects the direction to be the LSB of speed - if direction is negative,
+        // pin is low, if positive pin is high
+        let speed_and_dir = (speed << 1)
+            | (match direction {
+                Direction::Forwards => 1u32,
+                Direction::Backwards => 0u32,
+            });
+        self.sm.tx().wait_push(speed_and_dir).await;
     }
 }
 
@@ -160,26 +189,6 @@ pub struct Driver<'d, T: pio::Instance, const XSM: usize, const ZSM: usize, cons
     configured_program: Option<ConfiguredProgram>,
     programs: Programs<'d, T>,
     clock_divider: fixed::FixedU32<U8>,
-}
-
-macro_rules! axis {
-    ($driver: expr, $i: expr, |$axis: ident| $body: expr) => {
-        match $i {
-            0 => {
-                let $axis = &mut $driver.axes.0;
-                $body
-            }
-            1 => {
-                let $axis = &mut $driver.axes.1;
-                $body
-            }
-            2 => {
-                let $axis = &mut $driver.axes.2;
-                $body
-            }
-            _ => unreachable!(),
-        }
-    };
 }
 
 macro_rules! each_axis {
@@ -204,13 +213,13 @@ impl<'d, T: pio::Instance, const XSM: usize, const ZSM: usize, const CSM: usize>
     Driver<'d, T, XSM, ZSM, CSM>
 {
     pub fn new<
-        XD: gpio::Pin,
+        XD: PioPin,
         XS: PioPin,
         XZL: PioPin,
-        ZD: gpio::Pin,
+        ZD: PioPin,
         ZS: PioPin,
         ZZL: PioPin,
-        CD: gpio::Pin,
+        CD: PioPin,
         CS: PioPin,
         CZL: PioPin,
     >(
@@ -271,11 +280,7 @@ impl<'d, T: pio::Instance, const XSM: usize, const ZSM: usize, const CSM: usize>
             let speed = speeds.next().unwrap();
             if axis.zero_limit_pin.is_some() {
                 info!("will home axis {}", i);
-                axis.dir_pin.set_low();
-                axis.sm
-                    .tx()
-                    .wait_push(speed.to_sleep_cyles_per_step())
-                    .await;
+                axis.push_speed(speed, Direction::Backwards).await;
             }
         });
 
@@ -296,26 +301,10 @@ impl<'d, T: pio::Instance, const XSM: usize, const ZSM: usize, const CSM: usize>
     pub async fn do_move(&mut self, steps: [i32; 3], speeds: [StepsPerSecond; 3]) {
         self.configure_pio(ConfiguredProgram::Steps);
 
-        for (i, steps) in steps.into_iter().enumerate() {
-            match steps.cmp(&0) {
-                Ordering::Less => {
-                    axis!(self, i, |axis| axis.dir_pin.set_low());
-                }
-                Ordering::Equal => {}
-                Ordering::Greater => {
-                    axis!(self, i, |axis| axis.dir_pin.set_high());
-                }
-            }
-        }
-
         each_axis!(self, |i, axis| {
-            let steps = steps[i].unsigned_abs();
-            let sleeps = speeds[i].to_sleep_cyles_per_step();
-
-            info!("axis={} steps={} sleeps={}", i, steps, sleeps);
             // corresponds to [pull block] instructions in steps.s
-            axis.sm.tx().wait_push(steps).await;
-            axis.sm.tx().wait_push(sleeps).await;
+            axis.sm.tx().wait_push(steps[i].unsigned_abs()).await;
+            axis.push_speed(speeds[i], Direction::from(steps[i])).await;
         });
 
         self.pio.apply_sm_batch(|batch| {
