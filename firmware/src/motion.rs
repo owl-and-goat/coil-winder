@@ -115,19 +115,20 @@ impl State {
 
                     let target_pos = [target_pos.0[0], target_pos.0[1], target_pos.0[2]];
 
-                    let dist = self
-                        .position
-                        .each_mut()
-                        .zip_with(target_pos, |p1, p2| match p2 {
-                            Some(target_pos) => {
-                                let res = diff(target_pos, *p1);
-                                // TODO(aspen): Don't update position until after moving, to handle
-                                // canceled moves
-                                *p1 = target_pos;
-                                res
-                            }
-                            None => ICoord::ZERO,
-                        });
+                    let mut dist =
+                        self.position
+                            .each_mut()
+                            .zip_with(target_pos, |p1, p2| match p2 {
+                                Some(target_pos) => {
+                                    let res = diff(target_pos, *p1);
+                                    // TODO(aspen): Don't update position until after moving, to
+                                    // handle canceled moves
+                                    *p1 = target_pos;
+                                    res
+                                }
+                                None => ICoord::ZERO,
+                            });
+                    dist[2] = dist[2].saturating_neg();
 
                     let steps = dist.zip_with(
                         self.axis_speeds,
