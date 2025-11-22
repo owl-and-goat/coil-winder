@@ -76,7 +76,7 @@ fn read_commands(input: impl io::Read, verify: bool) -> Result<Vec<String>> {
             }
             match gcode::parse_single_command(AXIS_LABELS, line.as_bytes()) {
                 Ok(_) => {}
-                Err(_) => bail!("line {i}: Invalid gcode command"),
+                Err(_) => bail!("line {i}: Invalid gcode command: \"{}\"", line.trim()),
             };
             res.push(line);
         }
