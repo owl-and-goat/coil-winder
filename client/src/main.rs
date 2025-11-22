@@ -8,6 +8,9 @@ use indicatif::{ProgressBar, ProgressStyle};
 use rustyline::history::History;
 use rustyline::{error::ReadlineError, DefaultEditor};
 
+const AXES: usize = 4;
+const AXIS_LABELS: [char; AXES] = ['X', 'Z', 'C', 'F'];
+
 #[derive(clap::Subcommand, Debug)]
 enum Command {
     /// Interactive REPL for sending gcode commands
@@ -71,7 +74,7 @@ fn read_commands(input: impl io::Read, verify: bool) -> Result<Vec<String>> {
             if !line.ends_with('\n') {
                 line.push('\n');
             }
-            match gcode::parse_single_command(['X', 'Y', 'Z', 'F'], line.as_bytes()) {
+            match gcode::parse_single_command(AXIS_LABELS, line.as_bytes()) {
                 Ok(_) => {}
                 Err(_) => bail!("line {i}: Invalid gcode command"),
             };
