@@ -152,6 +152,7 @@ mod tests {
 
     const XYZ: [char; 3] = ['X', 'Y', 'Z'];
     const XYZF: [char; 4] = ['X', 'Y', 'Z', 'F'];
+    const XZCF: [char; 4] = ['X', 'Z', 'C', 'F'];
 
     #[test]
     fn non_empty_upos_requires_non_empty_coords() {
@@ -194,6 +195,21 @@ mod tests {
         assert_eq!(
             res,
             Command::RapidMove(UPos([None, None, None, Some(FixedU32::from_num(1500))]))
+        );
+    }
+
+    #[test]
+    fn zc_axis() {
+        let (rem, res) = command(XZCF)(b"G0 Z40 C10 F40").unwrap();
+        assert_eq!(rem, b"");
+        assert_eq!(
+            res,
+            Command::RapidMove(UPos([
+                None,
+                Some(FixedU32::lit("40")),
+                Some(FixedU32::lit("10")),
+                Some(FixedU32::lit("40"))
+            ]))
         );
     }
 
