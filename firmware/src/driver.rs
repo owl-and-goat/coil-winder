@@ -1,6 +1,6 @@
 //! Ref: https://www.allegromicro.com/-/media/files/datasheets/a4988-datasheet.pdf
 
-use defmt::{debug, info};
+use defmt::{debug, info, Format};
 use embassy_futures::join::{join, join3};
 use embassy_rp::{
     gpio::{self, Level, Pull},
@@ -14,7 +14,7 @@ const PIO_TARGET_HZ: u32 =
     // 2 μs per cycle
     500_000;
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+#[derive(Debug, Format, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 pub struct StepsPerSecond(pub u32);
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
