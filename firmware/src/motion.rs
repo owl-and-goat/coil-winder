@@ -172,10 +172,17 @@ impl State {
                         }
                     } else {
                         let c_speed = self.feedrate.to_steps_per_second(self.axis_speeds[2]);
-                        let dur_s = steps[2].unsigned_abs() / c_speed.0;
+                        let dur_s =
+                            UCoord::from_num(steps[2].unsigned_abs()) / UCoord::from_num(c_speed.0);
                         [
-                            StepsPerSecond(steps[0].unsigned_abs() / dur_s),
-                            StepsPerSecond(steps[1].unsigned_abs() / dur_s),
+                            StepsPerSecond(
+                                (UCoord::from_num(steps[0].unsigned_abs()) / dur_s)
+                                    .saturating_to_num(),
+                            ),
+                            StepsPerSecond(
+                                (UCoord::from_num(steps[1].unsigned_abs()) / dur_s)
+                                    .saturating_to_num(),
+                            ),
                             c_speed,
                         ]
                     };
