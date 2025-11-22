@@ -126,7 +126,7 @@ impl State {
                                 *p1 = target_pos;
                                 res
                             }
-                            None => p1.saturating_cast(),
+                            None => ICoord::ZERO,
                         });
 
                     let steps = dist.zip_with(
