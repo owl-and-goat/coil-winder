@@ -138,6 +138,7 @@ pub fn command<const AXES: usize>(
             value(Command::EnableAllSteppers, m("17")),
             value(Command::DisableAllSteppers, m("18")),
             value(Command::Home, g("28")),
+            value(Command::GetCurrentPosition, m("114")),
         ))
         .parse(i)
     }

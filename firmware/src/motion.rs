@@ -1,5 +1,5 @@
 use az::SaturatingCast;
-use defmt::info;
+use defmt::{info, Display2Format, Format};
 use embassy_rp::pio;
 use embassy_sync::{blocking_mutex::raw::RawMutex, channel};
 use embassy_time::Timer;
@@ -28,6 +28,12 @@ fn diff(coord1: UCoord, coord2: UCoord) -> ICoord {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 struct MillimetersPerSecond(pub UCoord);
+
+impl Format for MillimetersPerSecond {
+    fn format(&self, fmt: defmt::Formatter) {
+        defmt::write!(fmt, "{}", Display2Format(&self.0))
+    }
+}
 
 impl MillimetersPerSecond {
     fn to_steps_per_second(self, microns_per_step: MicronsPerStep) -> StepsPerSecond {
@@ -179,6 +185,17 @@ impl State {
                     );
 
                     driver.do_move(steps, speed).await;
+                }
+                Command::GetCurrentPosition => {
+                    let [x, z, c] = self.position;
+                    let f = self.feedrate;
+                    info!(
+                        "X{} Z{} C{} F{}",
+                        Display2Format(&x),
+                        Display2Format(&z),
+                        Display2Format(&c),
+                        f
+                    );
                 }
                 Command::Park(_) => {}
             }

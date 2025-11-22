@@ -42,4 +42,6 @@ pub enum Command<const AXES: usize> {
     EnableAllSteppers,
     /// M18
     DisableAllSteppers,
+    /// M114
+    GetCurrentPosition,
 }
