@@ -10,5 +10,8 @@ eyre = "0.6.12"
 futures = "0.3.31"
 gcode = { path = "../gcode" }
 indicatif = "0.18.3"
+lexpr = "0.2.7"
 rustyline-async = "0.4"
 tokio = { version = "1.48", features = ["full"] }
+tracing = "0.1.41"
+tracing-subscriber = { version = "0.3.20", features = ["env-filter", "std", "fmt"] }

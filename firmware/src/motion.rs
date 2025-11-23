@@ -1,7 +1,10 @@
 use az::SaturatingCast;
 use defmt::{info, Display2Format, Format};
 use embassy_rp::pio;
-use embassy_sync::{blocking_mutex::raw::RawMutex, channel};
+use embassy_sync::{
+    blocking_mutex::raw::{CriticalSectionRawMutex, RawMutex},
+    channel,
+};
 use embassy_time::Timer;
 use fixed::{types::extra::U10, FixedI32};
 use fixed_sqrt::FastSqrt;
@@ -10,6 +13,7 @@ use gcode::{Command, UCoord};
 use crate::{
     driver::{self, StepsPerSecond},
     util::ArrayZipWith,
+    CommandId, MotionStatusMsg, COMMAND_BUFFER_SIZE,
 };
 
 pub type ICoord = FixedI32<U10>;
@@ -96,30 +100,36 @@ impl State {
         }
     }
 
-    pub async fn run<
-        const BUFFER_SIZE: usize,
-        const XSM: usize,
-        const CSM: usize,
-        const ZSM: usize,
-    >(
+    pub async fn run<const XSM: usize, const CSM: usize, const ZSM: usize>(
         mut self,
         mut driver: driver::Driver<'static, impl pio::Instance, XSM, CSM, ZSM>,
         command_rx: channel::Receiver<
             'static,
             impl RawMutex,
-            Command<{ AXES + 1 } /* for F */>,
-            BUFFER_SIZE,
+            (CommandId, Command<{ AXES + 1 } /* for F */>),
+            COMMAND_BUFFER_SIZE,
+        >,
+        status_tx: channel::Sender<
+            'static,
+            CriticalSectionRawMutex,
+            MotionStatusMsg,
+            COMMAND_BUFFER_SIZE,
         >,
     ) -> ! {
         loop {
-            let command = command_rx.receive().await;
+            let (command_id, command) = command_rx.receive().await;
+            info!("got command");
             match command {
                 Command::Stop => continue,
                 Command::Dwell(duration) => {
                     Timer::after_millis(duration.as_millis() as _).await;
                 }
-                Command::EnableAllSteppers => driver.set_sleep(false).await,
+                Command::EnableAllSteppers => {
+                    info!("enabling steppers");
+                    driver.set_sleep(false).await
+                }
                 Command::DisableAllSteppers => {
+                    info!("disabling steppers");
                     driver.set_sleep(true).await;
 
                     // If we disable the motors, we have to assume we don't know where we are
@@ -252,6 +262,10 @@ impl State {
                 }
                 Command::Park(_) => {}
             }
+            info!("command {} done", command_id);
+            status_tx
+                .send(MotionStatusMsg::CommandFinished(command_id))
+                .await;
         }
     }
 }

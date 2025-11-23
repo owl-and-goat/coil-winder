@@ -18,10 +18,7 @@ use embassy_rp::{
     pio::{InterruptHandler, Pio},
     Peri,
 };
-use embassy_sync::{
-    blocking_mutex::raw::CriticalSectionRawMutex,
-    channel::{self, Channel},
-};
+use embassy_sync::{blocking_mutex::raw::CriticalSectionRawMutex, channel};
 use embassy_time::{Duration, Timer};
 use heapless::Vec;
 use picoserve::make_static;
@@ -43,6 +40,14 @@ pub(crate) const AXES: usize = 4;
 pub(crate) const AXIS_LABELS: [char; AXES] = ['X', 'Z', 'C', 'F'];
 pub const COMMAND_BUFFER_SIZE: usize = 32;
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Format)]
+pub struct CommandId(pub u32);
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Format)]
+pub enum MotionStatusMsg {
+    CommandFinished(CommandId),
+}
+
 bind_interrupts!(struct Irqs {
     PIO0_IRQ_0 => InterruptHandler<PIO0>;
 });
@@ -60,20 +65,10 @@ async fn net_task(mut runner: embassy_net::Runner<'static, cyw43::NetDriver<'sta
 }
 
 #[embassy_executor::task]
-async fn server_task(
-    stack: embassy_net::Stack<'static>,
-    control: Control<'static>,
-    command_tx: channel::Sender<
-        'static,
-        CriticalSectionRawMutex,
-        gcode::Command<AXES>,
-        COMMAND_BUFFER_SIZE,
-    >,
-) -> ! {
-    server::run(stack, control, command_tx).await
+async fn server_task(server: server::Server) -> ! {
+    server.run().await
 }
 
-// TODO(aspen): Move this onto Core 2
 #[embassy_executor::task]
 async fn motion_task(
     motion: motion::State,
@@ -81,11 +76,17 @@ async fn motion_task(
     command_rx: channel::Receiver<
         'static,
         CriticalSectionRawMutex,
-        gcode::Command<AXES>,
+        (CommandId, gcode::Command<AXES>),
+        COMMAND_BUFFER_SIZE,
+    >,
+    status_tx: channel::Sender<
+        'static,
+        CriticalSectionRawMutex,
+        MotionStatusMsg,
         COMMAND_BUFFER_SIZE,
     >,
 ) -> ! {
-    motion.run(driver, command_rx).await;
+    motion.run(driver, command_rx, status_tx).await;
 }
 
 async fn blink_once(control: &mut Control<'_>) {
@@ -103,7 +104,13 @@ async fn core0(
     command_tx: channel::Sender<
         'static,
         CriticalSectionRawMutex,
-        gcode::Command<AXES>,
+        (CommandId, gcode::Command<AXES>),
+        COMMAND_BUFFER_SIZE,
+    >,
+    status_rx: channel::Receiver<
+        'static,
+        CriticalSectionRawMutex,
+        MotionStatusMsg,
         COMMAND_BUFFER_SIZE,
     >,
 ) {
@@ -144,7 +151,13 @@ async fn core0(
         info!("join failed with status={}", err.status);
     }
 
-    spawner.must_spawn(server_task(stack, control, command_tx));
+    spawner.must_spawn(server_task(server::Server {
+        stack,
+        control,
+        command_tx,
+        status_rx,
+        command_id_gen: 0,
+    }));
 }
 
 static mut CORE1_STACK: Stack<4096> = Stack::new();
@@ -200,11 +213,22 @@ fn main() -> ! {
     );
 
     static COMMAND_CHANNEL: StaticCell<
-        Channel<CriticalSectionRawMutex, gcode::Command<AXES>, COMMAND_BUFFER_SIZE>,
+        channel::Channel<
+            CriticalSectionRawMutex,
+            (CommandId, gcode::Command<AXES>),
+            COMMAND_BUFFER_SIZE,
+        >,
     > = StaticCell::new();
-    let command_channel: &'static _ = COMMAND_CHANNEL.init(Channel::new());
-    let command_rx = command_channel.receiver();
+    let command_channel: &'static mut _ = COMMAND_CHANNEL.init(channel::Channel::new());
     let command_tx = command_channel.sender();
+    let command_rx = command_channel.receiver();
+
+    static STATUS_CHANNEL: StaticCell<
+        channel::Channel<CriticalSectionRawMutex, MotionStatusMsg, COMMAND_BUFFER_SIZE>,
+    > = StaticCell::new();
+    let status_channel: &'static _ = STATUS_CHANNEL.init(channel::Channel::new());
+    let status_tx = status_channel.sender();
+    let status_rx = status_channel.receiver();
 
     embassy_rp::multicore::spawn_core1(
         p.CORE1,
@@ -235,11 +259,12 @@ fn main() -> ! {
                     ]),
                     driver,
                     command_rx,
+                    status_tx,
                 ))
             })
         },
     );
 
     let executor0 = EXECUTOR0.init(Executor::new());
-    executor0.run(|spawner| spawner.must_spawn(core0(pwr, spi, spawner, command_tx)))
+    executor0.run(|spawner| spawner.must_spawn(core0(pwr, spi, spawner, command_tx, status_rx)))
 }
