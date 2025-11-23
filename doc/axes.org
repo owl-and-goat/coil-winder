@@ -1,8 +1,9 @@
 #+title: Axes
 
+In order:
 - *X* - diameter axis. two motors
-- *C* - spindle
 - *Z* - axis parallel to the spindle. one motor
+- *C* - spindle
 
 * Pins
 
