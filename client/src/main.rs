@@ -86,6 +86,7 @@ fn read_commands(input: impl io::Read, verify: bool) -> Result<Vec<String>> {
 }
 
 pub struct Client {
+    addr: SocketAddr,
     stream: TcpStream,
     reader: BufReader<TcpStream>,
 }
@@ -93,18 +94,23 @@ pub struct Client {
 impl Client {
     pub fn connect(addr: impl ToSocketAddrs) -> io::Result<Self> {
         let stream = TcpStream::connect(addr)?;
+        let addr = stream.peer_addr()?;
         let reader = BufReader::new(stream.try_clone()?);
-        Ok(Self { stream, reader })
+        Ok(Self {
+            addr,
+            stream,
+            reader,
+        })
     }
 
     fn reconnect(&mut self) -> io::Result<()> {
-        let addr = self.stream.peer_addr()?;
+        let addr = self.addr;
         self.stream = TcpStream::connect(addr)?;
         self.reader = BufReader::new(self.stream.try_clone()?);
         Ok(())
     }
 
-    pub fn send(&mut self, mut command: String) -> io::Result<String> {
+    pub fn send(&mut self, mut command: String) -> Result<String> {
         if !command.ends_with('\n') {
             command.push('\n');
         }
@@ -113,7 +119,10 @@ impl Client {
             match self.stream.write_all(command.as_bytes()) {
                 Ok(()) => break,
                 Err(err) => match err.kind() {
-                    ErrorKind::ConnectionReset | ErrorKind::BrokenPipe => {
+                    ErrorKind::ConnectionReset
+                    | ErrorKind::ConnectionAborted
+                    | ErrorKind::BrokenPipe
+                    | ErrorKind::NotConnected => {
                         self.reconnect()?;
                         continue;
                     }
