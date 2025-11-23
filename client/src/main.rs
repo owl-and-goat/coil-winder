@@ -1,12 +1,19 @@
-use std::io::{self, BufRead, BufReader, ErrorKind, Write};
-use std::net::{SocketAddr, TcpStream, ToSocketAddrs};
+use std::{
+    io::{BufRead, ErrorKind, Read},
+    net::SocketAddr,
+};
 
 use clap::Parser;
 use clio::Input;
-use eyre::{bail, Result};
+use eyre::{Result, bail};
 use indicatif::{ProgressBar, ProgressStyle};
-use rustyline::history::History;
-use rustyline::{error::ReadlineError, DefaultEditor};
+use rustyline_async::ReadlineEvent;
+use tokio::{
+    io::{self, AsyncBufReadExt, AsyncWriteExt, BufReader},
+    net::{TcpStream, ToSocketAddrs, tcp},
+};
+// use rustyline::history::History;
+// use rustyline::{error::ReadlineError, DefaultEditor};
 
 const AXES: usize = 4;
 const AXIS_LABELS: [char; AXES] = ['X', 'Z', 'C', 'F'];
@@ -49,8 +56,8 @@ struct Args {
     command: Command,
 }
 
-fn read_commands(input: impl io::Read, verify: bool) -> Result<Vec<String>> {
-    let reader = BufReader::new(input);
+fn read_commands(input: impl Read, verify: bool) -> Result<Vec<String>> {
+    let reader = std::io::BufReader::new(input);
     let mut res = Vec::new();
     if !verify {
         for line in reader.lines() {
@@ -87,67 +94,75 @@ fn read_commands(input: impl io::Read, verify: bool) -> Result<Vec<String>> {
 
 pub struct Client {
     addr: SocketAddr,
-    stream: TcpStream,
-    reader: BufReader<TcpStream>,
+    reader: BufReader<tcp::OwnedReadHalf>,
+    writer: tcp::OwnedWriteHalf,
 }
 
 impl Client {
-    pub fn connect(addr: impl ToSocketAddrs) -> io::Result<Self> {
-        let stream = TcpStream::connect(addr)?;
+    pub async fn connect(addr: impl ToSocketAddrs) -> io::Result<Self> {
+        let stream = TcpStream::connect(addr).await?;
+        stream.set_nodelay(true)?;
         let addr = stream.peer_addr()?;
-        let reader = BufReader::new(stream.try_clone()?);
+
+        let (reader, writer) = stream.into_split();
+        let reader = BufReader::new(reader);
+
         Ok(Self {
             addr,
-            stream,
             reader,
+            writer,
         })
     }
 
-    fn reconnect(&mut self) -> io::Result<()> {
-        let addr = self.addr;
-        self.stream = TcpStream::connect(addr)?;
-        self.reader = BufReader::new(self.stream.try_clone()?);
+    async fn reconnect(&mut self) -> io::Result<()> {
+        let stream = TcpStream::connect(self.addr).await?;
+        stream.set_nodelay(true)?;
+        self.addr = stream.peer_addr()?;
+
+        let (reader, writer) = stream.into_split();
+        self.reader = BufReader::new(reader);
+        self.writer = writer;
         Ok(())
     }
 
-    pub fn send(&mut self, mut command: String) -> Result<String> {
+    pub async fn send(&mut self, mut command: String) -> Result<String> {
         if !command.ends_with('\n') {
             command.push('\n');
         }
 
         loop {
-            match self.stream.write_all(command.as_bytes()) {
+            match self.writer.write_all(command.as_bytes()).await {
                 Ok(()) => break,
                 Err(err) => match err.kind() {
                     ErrorKind::ConnectionReset
                     | ErrorKind::ConnectionAborted
                     | ErrorKind::BrokenPipe
                     | ErrorKind::NotConnected => {
-                        self.reconnect()?;
+                        self.reconnect().await?;
                         continue;
                     }
                     _ => return Err(err.into()),
                 },
             }
         }
-        self.stream.flush()?;
+        self.writer.flush().await?;
         let mut resp = String::new();
-        if self.reader.read_line(&mut resp)? == 0 {
-            self.reconnect()?;
+        if self.reader.read_line(&mut resp).await? == 0 {
+            self.reconnect().await?;
         }
         Ok(resp)
     }
 }
 
-fn main() -> Result<()> {
+#[tokio::main]
+async fn main() -> Result<()> {
     let args = Args::parse();
-    let mut rl = DefaultEditor::new()?;
-    let mut history = rustyline::history::MemHistory::new();
-    let mut client = Client::connect(args.addr)?;
+    let (mut rl, rlwriter) = rustyline_async::Readline::new(">> ".to_owned())?;
+    let mut client = Client::connect(args.addr).await?;
 
     match args.command {
         Command::Oneshot { command } => {
-            let resp = client.send(command)?;
+            let resp = client.send(command).await?;
             if resp.len() == 0 {
                 bail!("Got EOF from server");
             }
@@ -168,32 +183,23 @@ fn main() -> Result<()> {
             for command in commands {
                 bar.inc(1);
                 bar.set_message(command.clone());
-                let resp = client.send(command)?;
+                let resp = client.send(command).await?;
                 if print_responses {
                     bar.println(resp);
                 }
             }
 
             println!("Successfully ran {n} commands");
-
             Ok(())
         }
-        Command::Repl => {
-            loop {
-                match rl.readline(">> ") {
-                    Err(ReadlineError::Eof) => break,
-                    Err(ReadlineError::Interrupted) => continue,
-                    Err(err) => {
-                        eprintln!("{err}");
-                        break;
-                    }
-                    Ok(command) => {
-                        history.add(&command)?;
-                        client.send(command)?;
-                    }
+        Command::Repl => loop {
+            match rl.readline().await? {
+                ReadlineEvent::Eof => break Ok(()),
+                ReadlineEvent::Interrupted => continue,
+                ReadlineEvent::Line(command) => {
+                    client.send(command).await?;
                 }
             }
-            Ok(())
-        }
+        },
     }
 }

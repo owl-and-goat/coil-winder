@@ -7,6 +7,8 @@ edition = "2024"
 clap = { version = "4.5.51", features = ["derive", "unicode"] }
 clio = { version = "0.3.5", features = ["clap", "clap-parse"] }
 eyre = "0.6.12"
+futures = "0.3.31"
 gcode = { path = "../gcode" }
 indicatif = "0.18.3"
-rustyline = "17.0.2"
+rustyline-async = "0.4"
+tokio = { version = "1.48", features = ["full"] }
