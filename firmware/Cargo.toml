@@ -53,9 +53,6 @@ fixed-sqrt = "0.3.0"
 [profile.release]
 debug = 2
 
-[lib]
-harness = false
-
 [[test]]
 name = "coil_winder_tests"
 harness = false

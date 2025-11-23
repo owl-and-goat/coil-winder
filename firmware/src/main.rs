@@ -8,7 +8,7 @@ use cyw43::{Control, JoinOptions};
 use cyw43_pio::{PioSpi, DEFAULT_CLOCK_DIVIDER};
 use defmt::*;
 use embassy_executor::{Executor, Spawner};
-use embassy_net::{tcp::TcpSocket, Ipv4Cidr, StackResources};
+use embassy_net::{Ipv4Cidr, StackResources};
 use embassy_rp::{
     bind_interrupts,
     clocks::RoscRng,
@@ -23,7 +23,6 @@ use embassy_sync::{
     channel::{self, Channel},
 };
 use embassy_time::{Duration, Timer};
-use embedded_io_async::Write;
 use heapless::Vec;
 use picoserve::make_static;
 use static_cell::StaticCell;
@@ -34,13 +33,14 @@ use {defmt_rtt as _, panic_probe as _};
 
 mod driver;
 mod motion;
+mod server;
 pub(crate) mod util;
 
-const WIFI_NETWORK: Option<&str> = option_env!("WIFI_NETWORK");
-const WIFI_PASSWORD: Option<&str> = option_env!("WIFI_PASSWORD");
-const PORT: u16 = 1234;
-const AXES: usize = 4;
-const AXIS_LABELS: [char; AXES] = ['X', 'Z', 'C', 'F'];
+pub(crate) const WIFI_NETWORK: Option<&str> = option_env!("WIFI_NETWORK");
+pub(crate) const WIFI_PASSWORD: Option<&str> = option_env!("WIFI_PASSWORD");
+pub(crate) const PORT: u16 = 1234;
+pub(crate) const AXES: usize = 4;
+pub(crate) const AXIS_LABELS: [char; AXES] = ['X', 'Z', 'C', 'F'];
 pub const COMMAND_BUFFER_SIZE: usize = 32;
 
 bind_interrupts!(struct Irqs {
@@ -62,7 +62,7 @@ async fn net_task(mut runner: embassy_net::Runner<'static, cyw43::NetDriver<'sta
 #[embassy_executor::task]
 async fn server_task(
     stack: embassy_net::Stack<'static>,
-    mut control: Control<'static>,
+    control: Control<'static>,
     command_tx: channel::Sender<
         'static,
         CriticalSectionRawMutex,
@@ -70,81 +70,7 @@ async fn server_task(
         COMMAND_BUFFER_SIZE,
     >,
 ) -> ! {
-    let mut rx_buffer = [0; 1024];
-    let mut tx_buffer = [0; 1024];
-    let mut buf = [0; 2048];
-
-    'accept: loop {
-        let mut socket = TcpSocket::new(stack, &mut rx_buffer, &mut tx_buffer);
-        let mut n = 0;
-        socket.set_timeout(Some(Duration::from_secs(10)));
-
-        if let Err(e) = socket.accept(PORT).await {
-            warn!("accept error: {}", e);
-            continue;
-        }
-
-        blink_once(&mut control).await;
-        loop {
-            let command = {
-                'read_command: loop {
-                    let read = match socket.read(&mut buf[n..]).await {
-                        Ok(0) => {
-                            warn!("read EOF");
-                            continue 'accept;
-                        }
-                        Ok(n) => n,
-                        Err(e) => {
-                            warn!("read error: {}", e);
-                            continue 'accept;
-                        }
-                    };
-                    n += read;
-
-                    match gcode::parse_single_command(AXIS_LABELS, &buf[..n]) {
-                        Ok((remaining, command)) => {
-                            let start = usize::try_from(unsafe {
-                                remaining.as_ptr().offset_from(buf.as_ptr())
-                            })
-                            .unwrap();
-                            let end = start + remaining.len();
-                            let len = remaining.len();
-                            buf.copy_within(start..end, 0);
-                            n = len;
-                            info!("Got command: {}", &buf[..n]);
-                            break 'read_command command;
-                        }
-                        Err(gcode::Error::Incomplete(_)) => continue 'read_command,
-                        Err(gcode::Error::ParseFailed) => {
-                            warn!("parse failed");
-                            if let Err(e) = socket.write_all(b"wtf!\n").await {
-                                warn!("write error: {}", e);
-                                continue 'accept;
-                            }
-                            continue 'accept;
-                        }
-                    };
-                }
-            };
-
-            blink_once(&mut control).await;
-
-            match command {
-                gcode::Command::Stop => {
-                    // TODO(aspen): Also cancel the current command
-                    command_tx.clear();
-                }
-                command => {
-                    command_tx.send(command).await;
-                }
-            }
-
-            if let Err(e) = socket.write_all(b"gotcha!\n").await {
-                warn!("write error: {}", e);
-                continue 'accept;
-            }
-        }
-    }
+    server::run(stack, control, command_tx).await
 }
 
 // TODO(aspen): Move this onto Core 2
