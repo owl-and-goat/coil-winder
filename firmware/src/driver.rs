@@ -277,10 +277,11 @@ impl<'d, T: pio::Instance, const XSM: usize, const ZSM: usize, const CSM: usize>
         let mut speeds = speeds.into_iter();
 
         each_axis!(self, |i, axis| {
-            let speed = speeds.next().unwrap();
-            if axis.zero_limit_pin.is_some() {
-                info!("will home axis {}", i);
-                axis.push_speed(speed, Direction::Backwards).await;
+            if let Some(speed) = speeds.next() {
+                if axis.zero_limit_pin.is_some() {
+                    info!("will home axis {}", i);
+                    axis.push_speed(speed, Direction::Backwards).await;
+                }
             }
         });
 

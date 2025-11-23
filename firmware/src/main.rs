@@ -28,7 +28,7 @@ use heapless::Vec;
 use picoserve::make_static;
 use static_cell::StaticCell;
 
-use crate::motion::{ICoord, MicronsPerStep};
+use crate::motion::ICoord;
 
 use {defmt_rtt as _, panic_probe as _};
 
@@ -111,6 +111,7 @@ async fn server_task(
                             let len = remaining.len();
                             buf.copy_within(start..end, 0);
                             n = len;
+                            info!("Got command: {}", &buf[..n]);
                             break 'read_command command;
                         }
                         Err(gcode::Error::Incomplete(_)) => continue 'read_command,
@@ -287,9 +288,24 @@ fn main() -> ! {
             executor1.run(|spawner| {
                 spawner.must_spawn(motion_task(
                     motion::State::new([
-                        /* X */ MicronsPerStep(ICoord::from_num(12)),
-                        /* Z */ MicronsPerStep(ICoord::from_num(6)),
-                        /* C */ MicronsPerStep(ICoord::from_num(6)),
+                        /* X */
+                        motion::Axis {
+                            microns_per_step: ICoord::from_num(12).into(),
+                            degrees_per_step: (ICoord::lit("1.8") / ICoord::from_num(16)).into(),
+                            unit: motion::AxisUnit::Millimeters,
+                        },
+                        /* Z */
+                        motion::Axis {
+                            microns_per_step: (ICoord::from_num(6)).into(),
+                            degrees_per_step: (ICoord::lit("0.9") / ICoord::from_num(16)).into(),
+                            unit: motion::AxisUnit::Millimeters,
+                        },
+                        /* C */
+                        motion::Axis {
+                            microns_per_step: ICoord::from_num(12).into(),
+                            degrees_per_step: (ICoord::lit("1.8") / ICoord::from_num(16)).into(),
+                            unit: motion::AxisUnit::Rotations,
+                        },
                     ]),
                     driver,
                     command_rx,

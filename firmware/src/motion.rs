@@ -17,6 +17,34 @@ pub type ICoord = FixedI32<U10>;
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 pub struct MicronsPerStep(pub ICoord);
 
+impl From<ICoord> for MicronsPerStep {
+    fn from(value: ICoord) -> Self {
+        Self(value)
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+pub struct DegreesPerStep(pub ICoord);
+
+impl From<ICoord> for DegreesPerStep {
+    fn from(value: ICoord) -> Self {
+        Self(value)
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum AxisUnit {
+    Millimeters,
+    Rotations,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Axis {
+    pub microns_per_step: MicronsPerStep,
+    pub degrees_per_step: DegreesPerStep,
+    pub unit: AxisUnit,
+}
+
 fn diff(coord1: UCoord, coord2: UCoord) -> ICoord {
     if coord1 > coord2 {
         (coord1 - coord2).saturating_cast()
@@ -36,9 +64,12 @@ impl Format for MillimetersPerSecond {
 }
 
 impl MillimetersPerSecond {
-    fn to_steps_per_second(self, microns_per_step: MicronsPerStep) -> StepsPerSecond {
+    fn to_steps_per_second(
+        self,
+        MicronsPerStep(microns_per_step): MicronsPerStep,
+    ) -> StepsPerSecond {
         let microns = self.0 * UCoord::from_num(1000);
-        let steps = microns / microns_per_step.0.unsigned_abs();
+        let steps = microns / microns_per_step.unsigned_abs();
         StepsPerSecond(steps.saturating_cast())
     }
 }
@@ -51,17 +82,17 @@ pub struct State {
     is_homed: bool,
     /// Feedrate is always in terms of the C axis
     feedrate: MillimetersPerSecond,
-    position: [UCoord; 3],
-    axis_speeds: [MicronsPerStep; 3],
+    position: [UCoord; AXES],
+    axes: [Axis; AXES],
 }
 
 impl State {
-    pub fn new(axis_speeds: [MicronsPerStep; AXES]) -> Self {
+    pub fn new(axes: [Axis; AXES]) -> Self {
         Self {
             is_homed: false,
             feedrate: MillimetersPerSecond(UCoord::lit("1")),
             position: [UCoord::ZERO; AXES],
-            axis_speeds,
+            axes,
         }
     }
 
@@ -99,9 +130,17 @@ impl State {
                     }
                 }
                 Command::Home => {
-                    let speed = [HOME_SPEED; 3].zip_with(self.axis_speeds, |speed, axis_speed| {
-                        speed.to_steps_per_second(axis_speed)
-                    });
+                    let speed =
+                        [HOME_SPEED; 2].zip_with([self.axes[0], self.axes[1]], |speed, axis| {
+                            match axis.unit {
+                                AxisUnit::Millimeters => {
+                                    speed.to_steps_per_second(axis.microns_per_step)
+                                }
+                                AxisUnit::Rotations => {
+                                    StepsPerSecond(0) /* can't home non-distance axes */
+                                }
+                            }
+                        });
                     driver.home(speed).await;
                     self.is_homed = true;
                     for coord in self.position.each_mut() {
@@ -130,26 +169,33 @@ impl State {
                             });
                     dist[2] = dist[2].saturating_neg();
 
-                    let steps = dist.zip_with(
-                        self.axis_speeds,
-                        |dist, MicronsPerStep(microns_per_step)| -> i32 {
-                            let microns = dist * ICoord::from_num(1000);
-                            let steps = microns / microns_per_step;
-                            steps.saturating_cast()
-                        },
-                    );
+                    let steps = dist.zip_with(self.axes, |dist, axis| -> i32 {
+                        match axis.unit {
+                            AxisUnit::Millimeters => {
+                                let microns = dist * ICoord::from_num(1000);
+                                let steps = microns / axis.microns_per_step.0;
+                                steps.saturating_cast()
+                            }
+                            AxisUnit::Rotations => {
+                                // Dist is in rotations
+                                ((dist * 360) / axis.degrees_per_step.0).saturating_cast()
+                            }
+                        }
+                    });
 
                     let speed = if dist[2].is_zero() {
                         if dist[1].is_zero() {
                             [
-                                self.feedrate.to_steps_per_second(self.axis_speeds[0]),
+                                self.feedrate
+                                    .to_steps_per_second(self.axes[0].microns_per_step),
                                 StepsPerSecond(0),
                                 StepsPerSecond(0),
                             ]
                         } else if dist[0].is_zero() {
                             [
                                 StepsPerSecond(0),
-                                self.feedrate.to_steps_per_second(self.axis_speeds[1]),
+                                self.feedrate
+                                    .to_steps_per_second(self.axes[1].microns_per_step),
                                 StepsPerSecond(0),
                             ]
                         } else {
@@ -165,13 +211,17 @@ impl State {
                                     / (x_over_z * x_over_z + UCoord::from_num(1)).fast_sqrt()
                             };
                             [
-                                MillimetersPerSecond(x_fr).to_steps_per_second(self.axis_speeds[0]),
-                                MillimetersPerSecond(z_fr).to_steps_per_second(self.axis_speeds[1]),
+                                MillimetersPerSecond(x_fr)
+                                    .to_steps_per_second(self.axes[0].microns_per_step),
+                                MillimetersPerSecond(z_fr)
+                                    .to_steps_per_second(self.axes[1].microns_per_step),
                                 StepsPerSecond(0),
                             ]
                         }
                     } else {
-                        let c_speed = self.feedrate.to_steps_per_second(self.axis_speeds[2]);
+                        let c_speed = self
+                            .feedrate
+                            .to_steps_per_second(self.axes[2].microns_per_step);
                         let dur_s =
                             UCoord::from_num(steps[2].unsigned_abs()) / UCoord::from_num(c_speed.0);
                         [
@@ -186,11 +236,6 @@ impl State {
                             c_speed,
                         ]
                     };
-
-                    info!(
-                        "x_speed={} z_speed={} c_speed={}",
-                        speed[0].0, speed[1].0, speed[2].0,
-                    );
 
                     driver.do_move(steps, speed).await;
                 }
