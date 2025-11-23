@@ -67,12 +67,17 @@
 ;;; Running gcode programs
 ;;;
 
-(def coil-winder-client-path
+(def project-dir
   (-> "."
       io/file
       fs/canonicalize
-      fs/parent
-      (str "/client/target/release/client")))
+      fs/parent))
+
+(def programs-dir
+  (fs/path project-dir "programs"))
+
+(def coil-winder-client-path
+  (fs/path project-dir "client/target/release/client"))
 
 (defn coil-winder-client! [& args]
   (apply sh coil-winder-client-path args))
@@ -132,6 +137,11 @@
                     :wire/width 0.13
                     }))
 
+  (->> program
+       gcode-program
+       gcode->str
+       (spit (str (fs/path programs-dir "scramble-wind.gcode"))))
+
   (oneshot! (first program))
 
   (run! (concat preamble [(first program)]))
@@ -140,6 +150,7 @@
   (oneshot! (get-current-position))
 
   (oneshot! (enable-all-steppers))
+  (oneshot! (disable-all-steppers))
   (oneshot! (home))
   (oneshot! (disable-all-steppers))
   (run! [(enable-all-steppers) (home)])
