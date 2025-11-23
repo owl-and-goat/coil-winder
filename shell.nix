@@ -3,6 +3,14 @@
 with pkgs;
 
 mkShell {
-  buildInputs = [ elf2uf2-rs probe-rs netcat ];
+  buildInputs = [
+    # Firmware
+    elf2uf2-rs
+    probe-rs
+    netcat
+
+    # Slicer
+    clojure
+  ];
   PROBE_RS_CHIP = "rp2040";
 }
