@@ -1,6 +1,15 @@
-#+title: a cnc coil winder
+#+title: coil winder
 
-this is a work in progress
+this repository contains the source for a mostly 3d-printed, gcode controlled,
+wifi-connected cnc coil winder, including the [[https://github.com/owl-and-goat/coil-winder/tree/main/firmware][firmware]], a [[https://github.com/owl-and-goat/coil-winder/tree/main/client][client]] for controlling
+it from a computer, a simple [[https://github.com/owl-and-goat/coil-winder/tree/main/slicer]["slicer" program]] for generating gcode to wind
+various sorts of electromagnetic coils, and the [[https://github.com/owl-and-goat/coil-winder/tree/main/parts][STL files]] for the 3D-printed parts
+
+the whole thing is driven off of a single [[https://www.raspberrypi.com/products/raspberry-pi-pico/][pi pico w]] microcontroller, with four
+[[https://www.adafruit.com/product/6109][a4988 stepper driver]] boards for controlling the stepper motors.
+
+coming soon: a longer writeup of how everything works, including instructions on
+how to build one yourself if you want
 
 * photos
 
