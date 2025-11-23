@@ -1,4 +1,5 @@
 (ns slicer
+  (:refer-clojure :exclude [run!])
   (:require [clojure.string :as str]
             [clojure.math :as math]
             [babashka.fs :as fs]
