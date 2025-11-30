@@ -21,10 +21,9 @@ use embassy_rp::{
 use embassy_sync::{blocking_mutex::raw::CriticalSectionRawMutex, channel};
 use embassy_time::{Duration, Timer};
 use heapless::Vec;
+use movement::units::{MillimetersPerSecondSquared, UNum};
 use picoserve::make_static;
 use static_cell::StaticCell;
-
-use crate::motion::ICoord;
 
 use {defmt_rtt as _, panic_probe as _};
 
@@ -240,21 +239,24 @@ fn main() -> ! {
                     motion::State::new([
                         /* X */
                         motion::Axis {
-                            microns_per_step: ICoord::from_num(12).into(),
-                            degrees_per_step: (ICoord::lit("1.8") / ICoord::from_num(16)).into(),
+                            microns_per_step: UNum::from_num(12).into(),
+                            degrees_per_step: (UNum::lit("1.8") / UNum::from_num(16)).into(),
                             unit: motion::AxisUnit::Millimeters,
+                            max_accel: MillimetersPerSecondSquared(UNum::from_num(800)),
                         },
                         /* Z */
                         motion::Axis {
-                            microns_per_step: (ICoord::from_num(6)).into(),
-                            degrees_per_step: (ICoord::lit("0.9") / ICoord::from_num(16)).into(),
+                            microns_per_step: (UNum::from_num(6)).into(),
+                            degrees_per_step: (UNum::lit("0.9") / UNum::from_num(16)).into(),
                             unit: motion::AxisUnit::Millimeters,
+                            max_accel: MillimetersPerSecondSquared(UNum::from_num(800)),
                         },
                         /* C */
                         motion::Axis {
-                            microns_per_step: ICoord::from_num(12).into(),
-                            degrees_per_step: (ICoord::lit("1.8") / ICoord::from_num(16)).into(),
+                            microns_per_step: UNum::from_num(12).into(),
+                            degrees_per_step: (UNum::lit("1.8") / UNum::from_num(16)).into(),
                             unit: motion::AxisUnit::Rotations,
+                            max_accel: MillimetersPerSecondSquared(UNum::from_num(800)),
                         },
                     ]),
                     driver,

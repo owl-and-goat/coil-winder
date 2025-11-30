@@ -22,6 +22,7 @@ cyw43-pio = { version= "0.8.0", features = ["defmt"] }
 defmt = "1.0"
 defmt-rtt = "1.0"
 fixed = "1.29.0"
+fixed-sqrt = "0.3.0"
 fixed-macro = "1.2"
 az = "1.2.1"
 
@@ -49,7 +50,7 @@ picoserve = { version = "0.17.1", features = ["defmt", "embassy"] }
 
 # Local dependencies
 gcode = { path = "../gcode" }
-fixed-sqrt = "0.3.0"
+movement = { path = "../movement" }
 
 [profile.release]
 debug = 2
