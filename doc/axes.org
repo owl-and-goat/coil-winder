@@ -10,19 +10,25 @@ In order:
 #+attr_org: :width 1000
 [[file:./pico-2-r4-pinout.svg]]
 
-- sleep (all axes): pin 9
+all directions (left, right, ...) are given wrt. the pico in the above
+orientation.
+
+- sleep (all axes): pin 15
 
 - *X*
-  - step: pin 10
-  - dir: pin 11
-  - zero limit: pin 6
+  (controllers to the left of the pico, and the left zero limit input)
+  - step: pin 4
+  - dir: pin 5
+  - zero limit: pin 3
 - *Z*
-  - step: pin 12
-  - dir: pin 13
-  - zero limit: pin 7
+  (controller to the lower right of the pico)
+  - step: pin 20
+  - dir: pin 21
+  - zero limit: pin 2
 - *C*
-  - step: pin 14
-  - dir: pin 15
+  (controller to the upper right of the pico)
+  - step: pin 16
+  - dir: pin 17
 
 positive is at the front right corner if the spindle is at the back right
 
