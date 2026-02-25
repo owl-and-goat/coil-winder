@@ -1,0 +1,16 @@
+#+title: Firmware development
+
+* Flashing
+
+To flash the firmware:
+
+#+begin_src shell :dir ..
+cd firmware && WIFI_NETWORK=network WIFI_PASSWORD=password cargo flash --release
+#+end_src
+
+
+* Accessing logs
+
+#+begin_src shell :dir ..
+cd firmware && probe-rs attach --chip rp2040 target/thumbv6m-none-eabi/release/coil-winder
+#+end_src
