@@ -81,7 +81,7 @@
   (fs/path project-dir "client/target/release/client"))
 
 (defn coil-winder-client! [& args]
-  (apply sh coil-winder-client-path args))
+  (apply sh (str coil-winder-client-path) args))
 
 (defn oneshot! [gcode]
   (let [gcode-str (gcode-cmd->str gcode)]
