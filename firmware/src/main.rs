@@ -132,9 +132,10 @@ async fn core0(
         net_device,
         // Config::dhcpv4(Default::default())
         embassy_net::Config::ipv4_static(embassy_net::StaticConfigV4 {
-            address: Ipv4Cidr::new(Ipv4Addr::new(192, 168, 11, 40), 24),
+            // TODO(aspen): Make these configurable at compile-time
+            address: Ipv4Cidr::new(Ipv4Addr::new(192, 168, 1, 40), 24),
             dns_servers: Vec::new(),
-            gateway: Some(Ipv4Addr::new(192, 168, 11, 1)),
+            gateway: Some(Ipv4Addr::new(192, 168, 1, 1)),
         }),
         make_static!(StackResources<3>, StackResources::new()),
         RoscRng.next_u64(),
