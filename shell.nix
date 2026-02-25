@@ -6,7 +6,7 @@ mkShell {
   buildInputs = [
     # Firmware
     elf2uf2-rs
-    probe-rs
+    probe-rs-tools
     netcat
 
     # Slicer
