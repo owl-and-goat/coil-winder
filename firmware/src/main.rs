@@ -21,17 +21,17 @@ use embassy_rp::{
 use embassy_sync::{blocking_mutex::raw::CriticalSectionRawMutex, channel};
 use embassy_time::{Duration, Timer};
 use heapless::Vec;
-use picoserve::make_static;
 use static_cell::StaticCell;
 
 use crate::motion::ICoord;
 
 use {defmt_rtt as _, panic_probe as _};
 
+#[macro_use]
+pub(crate) mod util;
 mod driver;
 mod motion;
 mod server;
-pub(crate) mod util;
 
 pub(crate) const WIFI_NETWORK: Option<&str> = option_env!("WIFI_NETWORK");
 pub(crate) const WIFI_PASSWORD: Option<&str> = option_env!("WIFI_PASSWORD");

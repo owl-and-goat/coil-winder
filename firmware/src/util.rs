@@ -69,3 +69,14 @@ impl<T, U, const N: usize> ArrayUnzip<T, U, N> for [(T, U); N] {
         unsafe { (mem::transmute_copy(&first), mem::transmute_copy(&snd)) }
     }
 }
+
+/// Replacement for [`static_cell::make_static`] for use cases when the type is known.
+#[macro_export]
+macro_rules! make_static {
+    ($t:ty, $val:expr) => ($crate::make_static!($t, $val,));
+    ($t:ty, $val:expr, $(#[$m:meta])*) => {{
+        $(#[$m])*
+        static STATIC_CELL: static_cell::StaticCell<$t> = static_cell::StaticCell::new();
+        STATIC_CELL.init($val)
+    }};
+}
