@@ -42,6 +42,10 @@ impl Server {
                 warn!("accept error: {}", e);
                 continue;
             }
+            info!(
+                "Accepted new connection from {:?}",
+                socket.remote_endpoint()
+            );
 
             blink_once(&mut self.control).await;
             loop {
