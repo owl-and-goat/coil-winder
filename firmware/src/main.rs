@@ -186,25 +186,25 @@ fn main() -> ! {
     let prgs = driver::Programs::new(&mut pio.common);
     let driver = driver::Driver::new(
         pio.common,
-        /* sleep_pin = */ p.PIN_9,
+        /* sleep_pin = */ p.PIN_15,
         driver::config::Axes {
             x_axis: driver::config::Axis {
-                step: p.PIN_10,
-                dir: p.PIN_11,
-                zero_limit: Some(p.PIN_6),
+                step: p.PIN_4,
+                dir: p.PIN_5,
+                zero_limit: Some(p.PIN_2),
                 irq: pio.irq1,
                 sm: pio.sm1,
             },
             z_axis: driver::config::Axis {
-                step: p.PIN_12,
-                dir: p.PIN_13,
-                zero_limit: Some(p.PIN_7),
+                step: p.PIN_20,
+                dir: p.PIN_21,
+                zero_limit: Some(p.PIN_3),
                 irq: pio.irq2,
                 sm: pio.sm2,
             },
             c_axis: driver::config::Axis {
-                step: p.PIN_14,
-                dir: p.PIN_15,
+                step: p.PIN_16,
+                dir: p.PIN_17,
                 zero_limit: None::</* can put anything here, lol */ Peri<PIN_0>>,
                 irq: pio.irq3,
                 sm: pio.sm3,

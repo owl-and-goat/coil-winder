@@ -19,12 +19,12 @@ orientation.
   (controllers to the left of the pico, and the left zero limit input)
   - step: pin 4
   - dir: pin 5
-  - zero limit: pin 3
+  - zero limit: pin 2
 - *Z*
-  (controller to the lower right of the pico)
+  (controller to the lower right of the pico, and the right zero limit input)
   - step: pin 20
   - dir: pin 21
-  - zero limit: pin 2
+  - zero limit: pin 3
 - *C*
   (controller to the upper right of the pico)
   - step: pin 16
@@ -43,3 +43,12 @@ reassemble it.
   the motor (with the non-shaft end of the motor up).
 
 this should align everyone nicely.
+
+* Z-Axis Wire Order
+
+from the left: red, blue, black, green.
+
+* C-Axis Wire Order
+
+the most natural orientation if the ribbon is folded away from the motor: shaft
+side facing up.
