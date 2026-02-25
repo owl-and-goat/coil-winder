@@ -124,7 +124,7 @@ async fn core0(
     control.init(clm).await;
 
     control
-        .set_power_management(cyw43::PowerManagementMode::PowerSave)
+        .set_power_management(cyw43::PowerManagementMode::Performance)
         .await;
 
     // Init network stack
