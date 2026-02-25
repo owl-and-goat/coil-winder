@@ -1,6 +1,6 @@
 use std::{
     collections::HashMap,
-    fmt::{self, Display},
+    fmt::{self, Debug, Display},
     io::{BufRead, ErrorKind, Read},
     net::SocketAddr,
     sync::Arc,
@@ -18,7 +18,7 @@ use tokio::{
     sync::{mpsc, Mutex},
     task::JoinHandle,
 };
-use tracing::{debug, info, warn};
+use tracing::{debug, info, instrument, warn, Level};
 
 const AXES: usize = 4;
 const AXIS_LABELS: [char; AXES] = ['X', 'Z', 'C', 'F'];
@@ -186,8 +186,9 @@ pub struct Client {
 }
 
 impl Client {
+    #[instrument(level = Level::DEBUG, fields(addr = %addr))]
     pub async fn connect(
-        addr: impl ToSocketAddrs,
+        addr: impl ToSocketAddrs + Display,
     ) -> Result<(Self, mpsc::UnboundedReceiver<Done>)> {
         let stream = TcpStream::connect(addr).await?;
         stream.set_nodelay(true)?;
