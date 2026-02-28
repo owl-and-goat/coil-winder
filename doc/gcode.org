@@ -1,0 +1,37 @@
+#+TITLE: Supported GCode commands
+
++ *G0 X<x> Z<z> C<c>* - Rapid move
+  All coordinates optional
+
++ *G1 X<x> Z<z> C<c>* - Linear move
+  All coordinates optional
+
+  G0 and G1 are synonyms for now
+
++ *G4 <dur>* - Dwell (sleep)
+
++ *G28* - Home
+
++ *M0* - Stop
+
++ *M17* - Enable all steppers
+
++ *M18* - Disable all steppers
+
++ *M114* - Get current position
+
+  Prints current position to debug console
+
+* Standard preamble
+
+#+begin_src gcode
+M0
+M17
+G28
+#+end_src
+
+* Standard postamble
+
+#+begin_src gcode
+M18
+#+end_src
