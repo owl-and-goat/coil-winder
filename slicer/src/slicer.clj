@@ -61,8 +61,7 @@
 (comment
   (println
    (gcode->str
-    (gcode-program [(rapid-move {:X 20 :C 10 :Z 40})])))
-  )
+    (gcode-program [(rapid-move {:X 20 :C 10 :Z 40})]))))
 
 ;;;
 ;;; Running gcode programs
@@ -130,18 +129,51 @@
           (take turns)
           (map rapid-move)))))
 
+(defn linear-wind [{bobbin-position :bobbin/position
+                    bobbin-width :bobbin/width
+                    wire-width :wire/width
+                    backoff-x :backoff/x
+                    backoff-z :backoff/z}]
+  (let [base-feedrate 20
+        turns (math/floor (/ bobbin-width wire-width))
+        backoff-turns (math/ceil (/ backoff-z wire-width))
+
+        wind (fn [turns c-start z-start]
+               (rapid-move
+                {:C (+ c-start turns)
+                 :Z (+ z-start (* turns wire-width))}))
+
+        step-to-beginning (rapid-move
+                           {:Z bobbin-position :X 0}
+                           :feedrate base-feedrate)
+        back-off (rapid-move
+                  {:Z bobbin-position :X backoff-x})
+        step-to-end (rapid-move
+                     {:Z (+ bobbin-position bobbin-width)})]
+    [step-to-beginning
+     (wind backoff-turns 0 bobbin-position)
+     back-off
+     (wind (- turns backoff-turns) backoff-turns bobbin-position)
+     step-to-end]))
+
 (comment
+  (->> turns
+       (+ 1)
+       (range 1)
+       (map (fn [turn]
+              (rapid-move {:C turn :Z (+ bobbin-position (* turn wire-width))}))))
+
   (def program
-    (scramble-wind {:turns 100
-                    :bobbin/position 43
-                    :bobbin/width 13.4
-                    :wire/width 0.13
-                    }))
+    (linear-wind {:bobbin/position 1
+                  :bobbin/width 53
+                  :wire/width 0.126
+                  :backoff/x 60
+                  :backoff/z 0.7}))
 
   (->> program
        gcode-program
        gcode->str
-       (spit (str (fs/path programs-dir "scramble-wind.gcode"))))
+       (spit (str (fs/path programs-dir "sstc-1.gcode"))))
 
   (oneshot! (first program))
 
@@ -154,5 +186,4 @@
   (oneshot! (disable-all-steppers))
   (oneshot! (home))
   (oneshot! (disable-all-steppers))
-  (run! [(enable-all-steppers) (home)])
-  )
+  (run! [(enable-all-steppers) (home)]))
