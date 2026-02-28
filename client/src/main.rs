@@ -351,6 +351,9 @@ async fn main() -> Result<()> {
                             warn!(%command_id, "unexpected command id in done msg from server");
                         }
                         run_bar.inc(1);
+                        if run_bar.length().is_none_or(|len| len == run_bar.position()) {
+                            break;
+                        }
                     }
                 }
             });
