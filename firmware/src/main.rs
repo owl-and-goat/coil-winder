@@ -4,7 +4,7 @@
 
 use core::{net::Ipv4Addr, ptr::addr_of_mut};
 
-use cyw43::{Control, JoinOptions};
+use cyw43::{aligned_bytes, Control, JoinOptions};
 use cyw43_pio::{PioSpi, DEFAULT_CLOCK_DIVIDER};
 use defmt::*;
 use embassy_executor::{Executor, Spawner};
@@ -13,7 +13,8 @@ use embassy_net::{Ipv4Cidr, StackResources};
 use embassy_rp::{
     bind_interrupts,
     clocks::RoscRng,
-    gpio::{self, Level, Output},
+    dma,
+    gpio::{Drive, Level, Output},
     multicore::Stack,
     peripherals::{DMA_CH0, PIN_0, PIO0},
     pio::{InterruptHandler, Pio},
@@ -51,11 +52,12 @@ pub enum MotionStatusMsg {
 
 bind_interrupts!(struct Irqs {
     PIO0_IRQ_0 => InterruptHandler<PIO0>;
+    DMA_IRQ_0 => dma::InterruptHandler<DMA_CH0>;
 });
 
 #[embassy_executor::task]
 async fn cyw43_task(
-    runner: cyw43::Runner<'static, Output<'static>, PioSpi<'static, PIO0, 0, DMA_CH0>>,
+    runner: cyw43::Runner<'static, cyw43::SpiBus<Output<'static>, PioSpi<'static, PIO0, 0>>>,
 ) -> ! {
     runner.run().await
 }
@@ -113,7 +115,7 @@ enum Color {
 impl StatusLeds {
     pub fn setup(&mut self) {
         self.all_pins()
-            .for_each(|p| p.set_drive_strength(gpio::Drive::_2mA));
+            .for_each(|p| p.set_drive_strength(Drive::_2mA));
     }
 
     fn pin(&mut self, color: Color) -> &mut Output<'static> {
@@ -134,10 +136,28 @@ impl StatusLeds {
         self.pin(color).set_high();
     }
 }
+
+#[embassy_executor::task]
+async fn net_status(mut status_leds: StatusLeds, stack: &'static embassy_net::Stack<'static>) -> ! {
+    if stack.is_link_up() {
+        status_leds.set_exclusive(Color::Green);
+    } else {
+        status_leds.set_exclusive(Color::Amber);
+        stack.wait_link_up().await;
+    }
+
+    loop {
+        stack.wait_link_down().await;
+        status_leds.set_exclusive(Color::Amber);
+        stack.wait_link_up().await;
+        status_leds.set_exclusive(Color::Green);
+    }
+}
+
 #[embassy_executor::task]
 async fn core0(
     pwr: Output<'static>,
-    spi: PioSpi<'static, PIO0, 0, DMA_CH0>,
+    spi: PioSpi<'static, PIO0, 0>,
     spawner: Spawner,
     mut status_leds: StatusLeds,
     command_tx: channel::Sender<
@@ -155,12 +175,13 @@ async fn core0(
 ) -> ! {
     status_leds.setup();
 
-    let fw = include_bytes!("../cyw43-firmware/43439A0.bin");
-    let clm = include_bytes!("../cyw43-firmware/43439A0_clm.bin");
+    let fw = aligned_bytes!("../cyw43-firmware/43439A0.bin");
+    let clm = aligned_bytes!("../cyw43-firmware/43439A0_clm.bin");
+    let nvram = aligned_bytes!("../cyw43-firmware/nvram_rp2040.bin");
 
     let state = make_static!(cyw43::State, cyw43::State::new());
-    let (net_device, mut control, runner) = cyw43::new(state, pwr, spi, fw).await;
-    spawner.must_spawn(cyw43_task(runner));
+    let (net_device, mut control, runner) = cyw43::new(state, pwr, spi, fw, nvram).await;
+    spawner.spawn(unwrap!(cyw43_task(runner)));
 
     control.init(clm).await;
 
@@ -181,7 +202,8 @@ async fn core0(
         make_static!(StackResources<3>, StackResources::new()),
         RoscRng.next_u64(),
     );
-    spawner.must_spawn(net_task(runner));
+    let stack = make_static!(embassy_net::Stack<'static>, stack);
+    spawner.spawn(unwrap!(net_task(runner)));
 
     status_leds.set_exclusive(Color::Amber);
     while let Err(err) = match with_timeout(
@@ -199,11 +221,11 @@ async fn core0(
     } {
         match err {
             Either::First(timeout) => error!("Join timed out, retrying ({})", timeout),
-            Either::Second(err) => info!("join failed with status={}", err.status),
+            Either::Second(err) => info!("join failed: {}", err),
         }
         status_leds.set_exclusive(Color::Red);
     }
-    status_leds.set_exclusive(Color::Green);
+    spawner.spawn(unwrap!(net_status(status_leds, stack)));
 
     server::Server {
         stack,
@@ -235,7 +257,7 @@ fn main() -> ! {
         cs,
         p.PIN_24,
         p.PIN_29,
-        p.DMA_CH0,
+        dma::Channel::new(p.DMA_CH0, Irqs),
     );
 
     let prgs = driver::Programs::new(&mut pio.common);
@@ -292,7 +314,7 @@ fn main() -> ! {
         move || {
             let executor1 = EXECUTOR1.init(Executor::new());
             executor1.run(|spawner| {
-                spawner.must_spawn(motion_task(
+                spawner.spawn(unwrap!(motion_task(
                     motion::State::new([
                         /* X */
                         motion::Axis {
@@ -316,14 +338,14 @@ fn main() -> ! {
                     driver,
                     command_rx,
                     status_tx,
-                ))
+                )))
             })
         },
     );
 
     let executor0 = EXECUTOR0.init(Executor::new());
     executor0.run(|spawner| {
-        spawner.must_spawn(core0(
+        spawner.spawn(unwrap!(core0(
             pwr,
             spi,
             spawner,
@@ -334,6 +356,6 @@ fn main() -> ! {
             },
             command_tx,
             status_rx,
-        ))
+        )))
     })
 }

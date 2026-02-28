@@ -6,18 +6,20 @@ authors = ["Aspen Smith <root@gws.fyi>"]
 resolver = "2"
 
 [dependencies]
-embassy-embedded-hal = { version = "0.5.0", features = ["defmt"] }
-embassy-sync = { version = "0.7.2", features = ["defmt"] }
-embassy-executor = { version = "0.9.1", features = ["arch-cortex-m", "executor-thread", "executor-interrupt", "defmt"] }
-embassy-time = { version = "0.5.0", features = ["defmt", "defmt-timestamp-uptime-tus"] }
-embassy-rp = { version = "0.8.0", features = ["defmt", "unstable-pac", "time-driver", "critical-section-impl", "rp2040"] }
-embassy-futures = { version = "0.1.2" }
-embassy-usb = { version = "0.5.1", features = ["defmt"] }
-embassy-usb-logger = { version = "0.5.1" }
+embassy-embedded-hal = { git = "https://github.com/embassy-rs/embassy.git", features = ["defmt"] }
+embassy-sync = { git = "https://github.com/embassy-rs/embassy.git", features = ["defmt"] }
+embassy-executor = { git = "https://github.com/embassy-rs/embassy.git", features = ["arch-cortex-m", "executor-thread", "executor-interrupt", "defmt"] }
+embassy-time = { git = "https://github.com/embassy-rs/embassy.git", features = ["defmt", "defmt-timestamp-uptime-tus"] }
+embassy-rp = { git = "https://github.com/embassy-rs/embassy.git", features = ["defmt", "unstable-pac", "time-driver", "critical-section-impl", "rp2040"] }
+embassy-futures = { git = "https://github.com/embassy-rs/embassy.git" }
+embassy-usb = { git = "https://github.com/embassy-rs/embassy.git", features = ["defmt"] }
+embassy-usb-logger = { git = "https://github.com/embassy-rs/embassy.git" }
+embassy-time-driver = { git = "https://github.com/embassy-rs/embassy.git" }
 usbd-hid = "0.8.2"
-embassy-net = { version = "0.7.1", features = ["defmt", "tcp", "udp", "dhcpv4", "medium-ethernet"] }
-cyw43 = { version = "0.5.0", features = ["defmt", "firmware-logs"] }
-cyw43-pio = { version= "0.8.0", features = ["defmt"] }
+embassy-net = { git = "https://github.com/embassy-rs/embassy.git", features = ["defmt", "tcp", "udp", "dhcpv4", "medium-ethernet"] }
+# cyw43 = { version = "0.5.0", features = ["defmt", "firmware-logs"] }
+cyw43 = { git = "https://github.com/embassy-rs/embassy.git", features = ["defmt", "firmware-logs"] }
+cyw43-pio = { git = "https://github.com/embassy-rs/embassy.git", features = ["defmt"] }
 
 defmt = "1.0"
 defmt-rtt = "1.1"
@@ -29,15 +31,15 @@ cortex-m = { version = "0.7.7", features = ["inline-asm"] }
 cortex-m-rt = "0.7.5"
 panic-probe = { version = "1.0", features = ["print-defmt"] }
 futures = { version = "0.3.32", default-features = false, features = ["async-await", "cfg-target-has-atomic", "unstable"] }
-heapless = "0.8"
+heapless = "0.9"
 
 embedded-test = "0.7.0"
 
 embedded-hal-1 = { package = "embedded-hal", version = "=1.0.0" }
 embedded-hal-async = "1.0.0"
 embedded-hal-bus = { version = "0.3.0", features = ["async"] }
-embedded-io-async = { version = "0.6.1", features = ["defmt-03"] }
-embedded-io = { version = "0.6.1", features = ["defmt-03"] }
+embedded-io-async = { version = "0.7.0", features = ["defmt"] }
+embedded-io = { version = "0.7.0", features = ["defmt"] }
 #embedded-storage = { version = "0.3" }
 static_cell = "2"
 portable-atomic = { version = "1.13", features = ["critical-section"] }

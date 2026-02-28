@@ -4,7 +4,7 @@ use defmt::{debug, info, Format};
 use embassy_futures::join::{join, join3};
 use embassy_rp::{
     gpio::{self, Level, Pull},
-    pio::{self, PioPin},
+    pio::{self, PioBatch, PioPin},
     pio_programs::clock_divider::calculate_pio_clock_divider,
     Peri,
 };
@@ -183,7 +183,6 @@ enum ConfiguredProgram {
 }
 
 pub struct Driver<'d, T: pio::Instance, const XSM: usize, const ZSM: usize, const CSM: usize> {
-    pio: pio::Common<'d, T>,
     sleep_pin: gpio::Output<'d>,
     axes: (Axis<'d, T, XSM>, Axis<'d, T, ZSM>, Axis<'d, T, CSM>),
     configured_program: Option<ConfiguredProgram>,
@@ -239,7 +238,6 @@ impl<'d, T: pio::Instance, const XSM: usize, const ZSM: usize, const CSM: usize>
         let sleep_pin = gpio::Output::new(sleep_pin, Level::Low);
 
         Self {
-            pio,
             sleep_pin,
             axes,
             configured_program: None,
@@ -286,14 +284,14 @@ impl<'d, T: pio::Instance, const XSM: usize, const ZSM: usize, const CSM: usize>
         });
 
         debug!("starting home routine");
-        self.pio.apply_sm_batch(|batch| {
-            each_axis!(self, |_, axis| {
-                if axis.zero_limit_pin.is_some() {
-                    batch.restart(&mut axis.sm);
-                    batch.set_enable(&mut axis.sm, true);
-                }
-            });
+        let mut batch = PioBatch::new();
+        each_axis!(self, |_, axis| {
+            if axis.zero_limit_pin.is_some() {
+                batch.restart(&mut axis.sm);
+                batch.set_enable(&mut axis.sm, true);
+            }
         });
+        batch.execute();
 
         join(self.axes.0.irq.wait(), self.axes.1.irq.wait()).await;
         debug!("finished home routine");
@@ -308,12 +306,12 @@ impl<'d, T: pio::Instance, const XSM: usize, const ZSM: usize, const CSM: usize>
             axis.push_speed(speeds[i], Direction::from(steps[i])).await;
         });
 
-        self.pio.apply_sm_batch(|batch| {
-            each_axis!(self, |_, axis| {
-                batch.restart(&mut axis.sm);
-                batch.set_enable(&mut axis.sm, true);
-            });
+        let mut batch = PioBatch::new();
+        each_axis!(self, |_, axis| {
+            batch.restart(&mut axis.sm);
+            batch.set_enable(&mut axis.sm, true);
         });
+        batch.execute();
 
         info!("waiting on irqs");
         join3(
@@ -324,15 +322,15 @@ impl<'d, T: pio::Instance, const XSM: usize, const ZSM: usize, const CSM: usize>
         .await;
         info!("done");
 
-        self.pio.apply_sm_batch(|batch| {
-            each_axis!(self, |_, axis| {
-                batch.set_enable(&mut axis.sm, false);
-            });
+        let mut batch = PioBatch::new();
+        each_axis!(self, |_, axis| {
+            batch.set_enable(&mut axis.sm, false);
         });
-        self.pio.apply_sm_batch(|batch| {
-            each_axis!(self, |_, axis| {
-                batch.restart(&mut axis.sm);
-            });
+        batch.execute();
+        let mut batch = PioBatch::new();
+        each_axis!(self, |_, axis| {
+            batch.restart(&mut axis.sm);
         });
+        batch.execute();
     }
 }

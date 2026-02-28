@@ -9,7 +9,7 @@ use embedded_io_async::Write;
 use crate::{blink_once, CommandId, MotionStatusMsg, AXES, AXIS_LABELS, COMMAND_BUFFER_SIZE, PORT};
 
 pub struct Server {
-    pub stack: embassy_net::Stack<'static>,
+    pub stack: &'static embassy_net::Stack<'static>,
     pub control: Control<'static>,
     pub command_tx: channel::Sender<
         'static,
@@ -34,7 +34,7 @@ impl Server {
         let mut buf = [0; 2048];
 
         'accept: loop {
-            let mut socket = TcpSocket::new(self.stack, &mut rx_buffer, &mut tx_buffer);
+            let mut socket = TcpSocket::new(*self.stack, &mut rx_buffer, &mut tx_buffer);
             let mut n = 0;
             socket.set_timeout(Some(Duration::from_secs(10)));
 
