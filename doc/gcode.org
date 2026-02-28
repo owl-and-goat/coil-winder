@@ -1,10 +1,14 @@
 #+TITLE: Supported GCode commands
 
-+ *G0 X<x> Z<z> C<c>* - Rapid move
++ *G0 X<x> Z<z> C<c> F<f>* - Rapid move
   All coordinates optional
 
-+ *G1 X<x> Z<z> C<c>* - Linear move
+  *F* is feedrate, in millimeters per second
+
++ *G1 X<x> Z<z> C<c> F<f>* - Linear move
   All coordinates optional
+
+  *F* is feedrate, in millimeters per second
 
   G0 and G1 are synonyms for now
 
