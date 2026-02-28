@@ -5,7 +5,7 @@ use embassy_sync::{
     blocking_mutex::raw::{CriticalSectionRawMutex, RawMutex},
     channel,
 };
-use embassy_time::Timer;
+use embassy_time::{Instant, Timer};
 use fixed::{types::extra::U10, FixedI32};
 use fixed_sqrt::FastSqrt;
 use gcode::{Command, UCoord};
@@ -116,9 +116,11 @@ impl State {
             COMMAND_BUFFER_SIZE,
         >,
     ) -> ! {
+        let start = Instant::now();
+        let ts = || Instant::now().duration_since(start).as_micros();
         loop {
             let (command_id, command) = command_rx.receive().await;
-            info!("got command");
+            info!("got command (t={:tus})", ts());
             match command {
                 Command::Stop => continue,
                 Command::Dwell(duration) => {
@@ -247,6 +249,7 @@ impl State {
                         ]
                     };
 
+                    info!("starting move (t={:tus})", ts());
                     driver.do_move(steps, speed).await;
                 }
                 Command::GetCurrentPosition => {
@@ -262,7 +265,7 @@ impl State {
                 }
                 Command::Park(_) => {}
             }
-            info!("command {} done", command_id);
+            info!("command {} done (t={:tus})", command_id, ts());
             status_tx
                 .send(MotionStatusMsg::CommandFinished(command_id))
                 .await;
