@@ -14,6 +14,10 @@ all directions (left, right, ...) are given wrt. the pico in the above
 orientation.
 
 - sleep (all axes): pin 15
+- *LEDs*
+  - amber: pin 7
+  - green: pin 10
+  - red: pin 13
 
 - *X*
   (controllers to the left of the pico, and the left zero limit input)
