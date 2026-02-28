@@ -8,6 +8,7 @@ use cyw43::{Control, JoinOptions};
 use cyw43_pio::{PioSpi, DEFAULT_CLOCK_DIVIDER};
 use defmt::*;
 use embassy_executor::{Executor, Spawner};
+use embassy_futures::select::Either;
 use embassy_net::{Ipv4Cidr, StackResources};
 use embassy_rp::{
     bind_interrupts,
@@ -19,7 +20,7 @@ use embassy_rp::{
     Peri,
 };
 use embassy_sync::{blocking_mutex::raw::CriticalSectionRawMutex, channel};
-use embassy_time::{Duration, Timer};
+use embassy_time::{with_timeout, Duration, Timer};
 use heapless::Vec;
 use static_cell::StaticCell;
 
@@ -183,14 +184,23 @@ async fn core0(
     spawner.must_spawn(net_task(runner));
 
     status_leds.set_exclusive(Color::Amber);
-    while let Err(err) = control
-        .join(
+    while let Err(err) = match with_timeout(
+        Duration::from_secs(5),
+        control.join(
             WIFI_NETWORK.unwrap_or(""),
             JoinOptions::new(WIFI_PASSWORD.unwrap_or("").as_bytes()),
-        )
-        .await
+        ),
+    )
+    .await
     {
-        info!("join failed with status={}", err.status);
+        Ok(Ok(())) => Ok(()),
+        Err(timeout) => Err(Either::First(timeout)),
+        Ok(Err(join_error)) => Err(Either::Second(join_error)),
+    } {
+        match err {
+            Either::First(timeout) => error!("Join timed out, retrying ({})", timeout),
+            Either::Second(err) => info!("join failed with status={}", err.status),
+        }
         status_leds.set_exclusive(Color::Red);
     }
     status_leds.set_exclusive(Color::Green);
