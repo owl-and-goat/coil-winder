@@ -1,11 +1,13 @@
-#+title: Axes
+#+title: Pins
+
+* Axes
 
 In order:
 - *X* - diameter axis. two motors
 - *Z* - axis parallel to the spindle. one motor
 - *C* - spindle
 
-* Pins
+** Pins
 
 #+attr_org: :width 1000
 [[file:./pico-2-r4-pinout.svg]]
@@ -14,10 +16,6 @@ all directions (left, right, ...) are given wrt. the pico in the above
 orientation.
 
 - sleep (all axes): pin 15
-- *LEDs*
-  - amber: pin 7
-  - green: pin 10
-  - red: pin 13
 
 - *X*
   (controllers to the left of the pico, and the left zero limit input)
@@ -36,7 +34,7 @@ orientation.
 
 positive is at the front right corner if the spindle is at the back right
 
-* X-Axis Motor Sync
+** X-Axis Motor Sync
 
 really just so we don't have to screw this up if we take this apart and
 reassemble it.
@@ -48,11 +46,18 @@ reassemble it.
 
 this should align everyone nicely.
 
-* Z-Axis Wire Order
+** Z-Axis Wire Order
 
 from the left: red, blue, black, green.
 
-* C-Axis Wire Order
+** C-Axis Wire Order
 
 the most natural orientation if the ribbon is folded away from the motor: shaft
 side facing up.
+
+* Status indicators
+
+- *LEDs*
+  - amber: pin 7
+  - green: pin 10
+  - red: pin 13
