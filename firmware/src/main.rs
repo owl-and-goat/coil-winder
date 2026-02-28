@@ -12,7 +12,7 @@ use embassy_net::{Ipv4Cidr, StackResources};
 use embassy_rp::{
     bind_interrupts,
     clocks::RoscRng,
-    gpio::{Level, Output},
+    gpio::{self, Level, Output},
     multicore::Stack,
     peripherals::{DMA_CH0, PIN_0, PIO0},
     pio::{InterruptHandler, Pio},
@@ -96,11 +96,49 @@ async fn blink_once(control: &mut Control<'_>) {
     control.gpio_set(0, false).await;
 }
 
+struct StatusLeds {
+    amber: Output<'static>,
+    green: Output<'static>,
+    red: Output<'static>,
+}
+
+#[derive(Clone, Copy, defmt::Format)]
+enum Color {
+    Amber,
+    Green,
+    Red,
+}
+
+impl StatusLeds {
+    pub fn setup(&mut self) {
+        self.all_pins()
+            .for_each(|p| p.set_drive_strength(gpio::Drive::_2mA));
+    }
+
+    fn pin(&mut self, color: Color) -> &mut Output<'static> {
+        match color {
+            Color::Amber => &mut self.amber,
+            Color::Green => &mut self.green,
+            Color::Red => &mut self.red,
+        }
+    }
+
+    fn all_pins(&mut self) -> impl Iterator<Item = &mut Output<'static>> {
+        [&mut self.amber, &mut self.green, &mut self.red].into_iter()
+    }
+
+    pub fn set_exclusive(&mut self, color: Color) {
+        self.all_pins().for_each(|p| p.set_low());
+        debug!("Setting color: {:?}", color);
+        self.pin(color).set_high();
+    }
+}
 #[embassy_executor::task]
 async fn core0(
     pwr: Output<'static>,
     spi: PioSpi<'static, PIO0, 0, DMA_CH0>,
     spawner: Spawner,
+    mut status_leds: StatusLeds,
     command_tx: channel::Sender<
         'static,
         CriticalSectionRawMutex,
@@ -113,7 +151,9 @@ async fn core0(
         MotionStatusMsg,
         COMMAND_BUFFER_SIZE,
     >,
-) {
+) -> ! {
+    status_leds.setup();
+
     let fw = include_bytes!("../cyw43-firmware/43439A0.bin");
     let clm = include_bytes!("../cyw43-firmware/43439A0_clm.bin");
 
@@ -142,6 +182,7 @@ async fn core0(
     );
     spawner.must_spawn(net_task(runner));
 
+    status_leds.set_exclusive(Color::Amber);
     while let Err(err) = control
         .join(
             WIFI_NETWORK.unwrap_or(""),
@@ -150,15 +191,19 @@ async fn core0(
         .await
     {
         info!("join failed with status={}", err.status);
+        status_leds.set_exclusive(Color::Red);
     }
+    status_leds.set_exclusive(Color::Green);
 
-    spawner.must_spawn(server_task(server::Server {
+    server::Server {
         stack,
         control,
         command_tx,
         status_rx,
         command_id_gen: 0,
-    }));
+    }
+    .run()
+    .await
 }
 
 static mut CORE1_STACK: Stack<4096> = Stack::new();
@@ -267,5 +312,18 @@ fn main() -> ! {
     );
 
     let executor0 = EXECUTOR0.init(Executor::new());
-    executor0.run(|spawner| spawner.must_spawn(core0(pwr, spi, spawner, command_tx, status_rx)))
+    executor0.run(|spawner| {
+        spawner.must_spawn(core0(
+            pwr,
+            spi,
+            spawner,
+            StatusLeds {
+                amber: Output::new(p.PIN_7, Level::Low),
+                green: Output::new(p.PIN_10, Level::Low),
+                red: Output::new(p.PIN_13, Level::Low),
+            },
+            command_tx,
+            status_rx,
+        ))
+    })
 }
