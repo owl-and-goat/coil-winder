@@ -34,6 +34,7 @@ use {defmt_rtt as _, panic_probe as _};
 #[macro_use]
 pub(crate) mod util;
 mod driver;
+mod mdns;
 mod motion;
 mod server;
 mod status_leds;
@@ -41,6 +42,7 @@ mod status_leds;
 pub(crate) const WIFI_NETWORK: Option<&str> = option_env!("WIFI_NETWORK");
 pub(crate) const WIFI_PASSWORD: Option<&str> = option_env!("WIFI_PASSWORD");
 pub(crate) const PORT: u16 = 1234;
+pub(crate) const MDNS_HOSTNAME: &str = "coil-winder";
 pub(crate) const AXES: usize = 4;
 pub(crate) const AXIS_LABELS: [char; AXES] = ['X', 'Z', 'C', 'F'];
 pub const COMMAND_BUFFER_SIZE: usize = 32;
@@ -97,6 +99,16 @@ async fn motion_task(
 #[embassy_executor::task]
 async fn status_leds_task(runner: status_leds::Runner<'static>) -> ! {
     runner.run().await
+}
+
+#[embassy_executor::task]
+async fn mdns_task(
+    stack: embassy_net::Stack<'static>,
+    hostname: &'static str,
+    ip: Ipv4Addr,
+    rng: RoscRng,
+) -> ! {
+    mdns::run(stack, hostname, ip, rng).await
 }
 
 fn status_behavior(status: Status) -> status_leds::PerColor<Behavior> {
@@ -214,6 +226,18 @@ async fn core0(
         }
     }
     status_leds.set_status(Status::Ready);
+
+    // Add mDNS multicast MAC address to cyw43 hardware filter
+    // IPv4 multicast 224.0.0.251 -> MAC 01:00:5e:00:00:fb
+    const MDNS_MULTICAST_MAC: [u8; 6] = [0x01, 0x00, 0x5e, 0x00, 0x00, 0xfb];
+    match control.add_multicast_address(MDNS_MULTICAST_MAC).await {
+        Ok(_) => info!("Added mDNS multicast MAC filter"),
+        Err(_) => error!("Failed to add mDNS multicast MAC"),
+    }
+
+    // Start mDNS responder
+    let our_ip = Ipv4Addr::new(10, 0, 0, 40);
+    spawner.must_spawn(mdns_task(stack, MDNS_HOSTNAME, our_ip, RoscRng));
 
     server::Server {
         stack,
