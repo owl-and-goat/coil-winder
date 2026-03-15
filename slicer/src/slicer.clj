@@ -97,12 +97,13 @@
 (defn scramble-wind [{:keys [turns]
                       bobbin-position :bobbin/position
                       bobbin-width :bobbin/width
-                      wire-width :wire/width}]
-  (let [base-feedrate 20
-        ;; step to beginning of bobbin
+                      wire-width :wire/width
+                      feedrate :feedrate
+                      :or {feedrate 20}}]
+  (let [;; step to beginning of bobbin
         step-to-beginning (rapid-move
                            {:Z bobbin-position :X 0}
-                           :feedrate base-feedrate)
+                           :feedrate feedrate)
         turns-per-layer (/ bobbin-width wire-width)
         mk-turn-positions
         (fn []
@@ -164,16 +165,20 @@
               (rapid-move {:C turn :Z (+ bobbin-position (* turn wire-width))}))))
 
   (def program
-    (linear-wind {:bobbin/position 1
-                  :bobbin/width 53
-                  :wire/width 0.126
-                  :backoff/x 60
-                  :backoff/z 0.7}))
+    (scramble-wind {:turns 5000
+                    :bobbin/position 43.5
+                    :bobbin/width 8.25
+                    :wire/width 0.06335
+                    }))
 
-  (->> program
+  (->> (scramble-wind {:turns 5000
+                       :bobbin/position 43.8
+                       :bobbin/width 8.25
+                       :wire/width 0.06335
+                       })
        gcode-program
        gcode->str
-       (spit (str (fs/path programs-dir "sstc-1.gcode"))))
+       (spit (str (fs/path programs-dir "pickup-1.gcode"))))
 
   (oneshot! (first program))
 
