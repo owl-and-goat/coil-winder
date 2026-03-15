@@ -165,8 +165,8 @@ impl<'d, T: pio::Instance, const SM: usize> Axis<'d, T, SM> {
 
     pub(self) async fn push_speed(&mut self, speed: StepsPerSecond, direction: Direction) {
         let speed = speed.to_sleep_cyles_per_step();
-        // steps.s expects the direction to be the LSB of speed - if direction is negative,
-        // pin is low, if positive pin is high
+        // steps.s expects the direction to be the least significant bit of speed - if direction is
+        // negative, pin is low, if positive pin is high
         let speed_and_dir = (speed << 1)
             | (match direction {
                 Direction::Forwards => 1u32,
