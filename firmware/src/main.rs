@@ -120,6 +120,10 @@ fn status_behavior(status: Status) -> status_leds::PerColor<Behavior> {
             amber: Behavior::Blink(BlinkSpeed::Fast),
             ..Default::default()
         },
+        Status::WaitingForDhcp => status_leds::PerColor {
+            amber: Behavior::Blink(BlinkSpeed::Slow),
+            ..Default::default()
+        },
         Status::Ready => status_leds::PerColor {
             green: Behavior::On,
             ..Default::default()
@@ -220,6 +224,7 @@ async fn core0(
     }
     // Wait for DHCP to assign an IP
     info!("Waiting for DHCP...");
+    status_leds.set_status(Status::WaitingForDhcp);
     stack.wait_config_up().await;
     let our_ip = stack
         .config_v4()

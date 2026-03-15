@@ -92,6 +92,7 @@ pub(crate) enum Status {
     #[default]
     Initializing,
     WifiConnecting,
+    WaitingForDhcp,
     Ready,
     WifiError,
     ExecutingCommand,
