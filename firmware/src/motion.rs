@@ -161,7 +161,7 @@ impl State {
                             }
                         });
                     match driver.home(speeds).await {
-                        Ok(_) => {
+                        Ok(()) => {
                             self.is_homed = true;
                             for coord in self.position.each_mut() {
                                 *coord = UCoord::ZERO;
