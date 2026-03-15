@@ -50,8 +50,8 @@ enum Command {
 #[derive(clap::Parser, Debug)]
 #[command(version)]
 struct Args {
-    #[clap(long, short, default_value = "10.0.0.40:1234")]
-    addr: SocketAddr,
+    #[clap(long, short, default_value = "coil-winder.local:1234")]
+    addr: String,
 
     #[clap(subcommand)]
     command: Command,
