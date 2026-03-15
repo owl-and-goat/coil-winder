@@ -3,7 +3,10 @@ use std::{
     fmt::{self, Debug, Display},
     io::{BufRead, ErrorKind, Read},
     net::SocketAddr,
-    sync::Arc,
+    sync::{
+        atomic::{AtomicBool, Ordering},
+        Arc,
+    },
 };
 
 use clap::Parser;
@@ -15,6 +18,7 @@ use rustyline_async::ReadlineEvent;
 use tokio::{
     io::{self, AsyncBufReadExt, AsyncWriteExt, BufReader},
     net::{tcp, TcpStream, ToSocketAddrs},
+    select, signal,
     sync::{mpsc, Mutex},
     task::JoinHandle,
 };
@@ -339,6 +343,7 @@ async fn main() -> Result<()> {
             );
 
             let sent_commands = Arc::new(Mutex::new(HashMap::<CommandId, String>::new()));
+            let cancelled: &'static AtomicBool = Box::leak(Box::new(AtomicBool::new(false)));
 
             let done_progress = tokio::spawn({
                 let sent_commands = Arc::clone(&sent_commands);
@@ -351,6 +356,9 @@ async fn main() -> Result<()> {
                             warn!(%command_id, "unexpected command id in done msg from server");
                         }
                         run_bar.inc(1);
+                        if cancelled.load(Ordering::Relaxed) {
+                            break;
+                        }
                         if run_bar.length().is_none_or(|len| len == run_bar.position()) {
                             break;
                         }
@@ -358,23 +366,43 @@ async fn main() -> Result<()> {
                 }
             });
 
-            for command in commands {
-                upload_bar.set_message(command.trim().to_owned());
-                match client.send(command.clone()).await? {
-                    Ack(None) => {
-                        run_bar.set_message(command.clone());
-                        run_bar.inc(1)
+            let send_commands = async {
+                for command in commands {
+                    upload_bar.set_message(command.trim().to_owned());
+                    match client.send(command.clone()).await? {
+                        Ack(None) => {
+                            run_bar.set_message(command.clone());
+                            run_bar.inc(1)
+                        }
+                        Ack(Some(command_id)) => {
+                            sent_commands.lock().await.insert(command_id, command);
+                        }
                     }
-                    Ack(Some(command_id)) => {
-                        sent_commands.lock().await.insert(command_id, command);
-                    }
+                    upload_bar.inc(1);
                 }
-                upload_bar.inc(1);
+                Ok::<_, eyre::Report>(())
+            };
+
+            select! {
+                result = send_commands => {
+                    result?;
+                    done_progress.await?;
+                    println!("Successfully ran {n} commands");
+                }
+                _ = signal::ctrl_c() => {
+                    cancelled.store(true, Ordering::Relaxed);
+                    eprintln!("\nInterrupted! Sending stop command...");
+                    if let Err(e) = client.send(
+                        format!("{}\n", gcode::Command::Stop.display(AXIS_LABELS)).to_owned()
+                    ).await {
+                        eprintln!("Failed to send stop command: {e}");
+                    }
+                    done_progress.abort();
+                    eprintln!("Stopped.");
+                    bail!("Interrupted");
+                }
             }
 
-            done_progress.await?;
-
-            println!("Successfully ran {n} commands");
             Ok(())
         }
         Command::Repl => loop {
