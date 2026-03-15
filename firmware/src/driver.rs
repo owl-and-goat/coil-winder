@@ -159,7 +159,7 @@ impl<'d, T: pio::Instance, const SM: usize> Axis<'d, T, SM> {
         }
 
         cfg.clock_divider = clock_divider;
-        cfg.use_program(&program, &[]);
+        cfg.use_program(&program, &[&self.step_pin]);
         self.sm.set_config(&cfg);
     }
 
@@ -180,6 +180,12 @@ impl<'d, T: pio::Instance, const SM: usize> Axis<'d, T, SM> {
 enum ConfiguredProgram {
     Home,
     Steps,
+}
+
+#[derive(Clone, Copy)]
+pub struct HomeError {
+    pub x_failed: bool,
+    pub z_failed: bool,
 }
 
 pub struct Driver<'d, T: pio::Instance, const XSM: usize, const ZSM: usize, const CSM: usize> {
@@ -270,16 +276,20 @@ impl<'d, T: pio::Instance, const XSM: usize, const ZSM: usize, const CSM: usize>
             .set_level(if sleep { Level::Low } else { Level::High });
     }
 
-    pub async fn home(&mut self, speeds: impl IntoIterator<Item = StepsPerSecond>) {
+    pub async fn home(
+        &mut self,
+        speeds: impl IntoIterator<Item = (u32, StepsPerSecond)>,
+    ) -> Result<(), HomeError> {
         debug!("homing");
         self.configure_pio(ConfiguredProgram::Home);
 
         let mut speeds = speeds.into_iter();
 
         each_axis!(self, |i, axis| {
-            if let Some(speed) = speeds.next() {
+            if let Some((max_steps, speed)) = speeds.next() {
                 if axis.zero_limit_pin.is_some() {
                     info!("will home axis {}", i);
+                    axis.sm.tx().wait_push(max_steps).await;
                     axis.push_speed(speed, Direction::Backwards).await;
                 }
             }
@@ -297,6 +307,28 @@ impl<'d, T: pio::Instance, const XSM: usize, const ZSM: usize, const CSM: usize>
 
         join(self.axes.0.irq.wait(), self.axes.1.irq.wait()).await;
         debug!("finished home routine");
+
+        let (x_left, z_left) = (
+            self.axes.0.sm.rx().wait_pull().await,
+            self.axes.1.sm.rx().wait_pull().await,
+        );
+        debug!("x_left = {}, z_left = {}", x_left, z_left);
+
+        // the homing routine unconditionally decrements its count register, and
+        // returns if that register is zero BEFORE decrement, meaning the
+        // register rolls over and we have to check for u32::MAX instead.
+        let x_failed = x_left == u32::MAX;
+        let z_failed = z_left == u32::MAX;
+        if x_failed || z_failed {
+            debug!(
+                "homing failed on:{}{}",
+                if x_failed { " x" } else { "" },
+                if z_failed { " z" } else { "" }
+            );
+            Err(HomeError { x_failed, z_failed })
+        } else {
+            Ok(())
+        }
     }
 
     pub async fn do_move(&mut self, steps: [i32; 3], speeds: [StepsPerSecond; 3]) {

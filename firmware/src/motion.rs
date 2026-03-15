@@ -11,7 +11,8 @@ use fixed_sqrt::FastSqrt;
 use gcode::{Command, UCoord};
 
 use crate::{
-    driver::{self, StepsPerSecond},
+    driver::{self, HomeError, StepsPerSecond},
+    status_leds::{self, Status},
     util::ArrayZipWith,
     CommandId, MotionStatusMsg, COMMAND_BUFFER_SIZE,
 };
@@ -47,6 +48,7 @@ pub struct Axis {
     pub microns_per_step: MicronsPerStep,
     pub degrees_per_step: DegreesPerStep,
     pub unit: AxisUnit,
+    pub length: ICoord,
 }
 
 fn diff(coord1: UCoord, coord2: UCoord) -> ICoord {
@@ -88,15 +90,17 @@ pub struct State {
     feedrate: MillimetersPerSecond,
     position: [UCoord; AXES],
     axes: [Axis; AXES],
+    status_leds: &'static status_leds::Control,
 }
 
 impl State {
-    pub fn new(axes: [Axis; AXES]) -> Self {
+    pub fn new(axes: [Axis; AXES], status_leds: &'static status_leds::Control) -> Self {
         Self {
             is_homed: false,
             feedrate: MillimetersPerSecond(UCoord::lit("1")),
             position: [UCoord::ZERO; AXES],
             axes,
+            status_leds,
         }
     }
 
@@ -142,21 +146,37 @@ impl State {
                     }
                 }
                 Command::Home => {
-                    let speed =
+                    let speeds =
                         [HOME_SPEED; 2].zip_with([self.axes[0], self.axes[1]], |speed, axis| {
                             match axis.unit {
-                                AxisUnit::Millimeters => {
-                                    speed.to_steps_per_second(axis.microns_per_step)
-                                }
+                                AxisUnit::Millimeters => (
+                                    (axis.length * ICoord::from_num(1000)
+                                        / axis.microns_per_step.0)
+                                        .saturating_cast(),
+                                    speed.to_steps_per_second(axis.microns_per_step),
+                                ),
                                 AxisUnit::Rotations => {
-                                    StepsPerSecond(0) /* can't home non-distance axes */
+                                    (0u32, StepsPerSecond(0)) /* can't home non-distance axes */
                                 }
                             }
                         });
-                    driver.home(speed).await;
-                    self.is_homed = true;
-                    for coord in self.position.each_mut() {
-                        *coord = UCoord::ZERO;
+                    match driver.home(speeds).await {
+                        Ok(_) => {
+                            self.is_homed = true;
+                            for coord in self.position.each_mut() {
+                                *coord = UCoord::ZERO;
+                            }
+                        }
+                        Err(HomeError { x_failed, z_failed }) => {
+                            self.status_leds.set_status(if x_failed && z_failed {
+                                Status::BothHomingFailed
+                            } else if x_failed {
+                                Status::XHomingFailed
+                            } else {
+                                Status::ZHomingFailed
+                            });
+                            driver.set_sleep(true).await;
+                        }
                     }
                 }
                 Command::RapidMove(target_pos) | Command::LinearMove(target_pos) => {

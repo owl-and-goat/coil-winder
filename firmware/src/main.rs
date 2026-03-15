@@ -101,7 +101,6 @@ async fn status_leds_task(runner: status_leds::Runner<'static>) -> ! {
 
 fn status_behavior(status: Status) -> status_leds::PerColor<Behavior> {
     match status {
-        // TODO
         Status::Initializing => status_leds::PerColor {
             amber: Behavior::On,
             ..Default::default()
@@ -121,6 +120,21 @@ fn status_behavior(status: Status) -> status_leds::PerColor<Behavior> {
         Status::ExecutingCommand => status_leds::PerColor {
             green: Behavior::On,
             amber: Behavior::Blink(BlinkSpeed::Slow),
+            ..Default::default()
+        },
+        Status::XHomingFailed => status_leds::PerColor {
+            red: Behavior::Blink(BlinkSpeed::Fast),
+            amber: Behavior::On,
+            ..Default::default()
+        },
+        Status::ZHomingFailed => status_leds::PerColor {
+            red: Behavior::On,
+            amber: Behavior::Blink(BlinkSpeed::Fast),
+            ..Default::default()
+        },
+        Status::BothHomingFailed => status_leds::PerColor {
+            red: Behavior::Blink(BlinkSpeed::Fast),
+            amber: Behavior::Blink(BlinkSpeed::Fast),
             ..Default::default()
         },
     }
@@ -231,6 +245,8 @@ fn main() -> ! {
         status_behavior,
     );
 
+    let status_leds_control = status_leds.control();
+
     let pwr = Output::new(p.PIN_23, Level::Low);
     let cs = Output::new(p.PIN_25, Level::High);
     let mut pio = Pio::new(p.PIO0, Irqs);
@@ -300,26 +316,35 @@ fn main() -> ! {
             let executor1 = EXECUTOR1.init(Executor::new());
             executor1.run(|spawner| {
                 spawner.must_spawn(motion_task(
-                    motion::State::new([
-                        /* X */
-                        motion::Axis {
-                            microns_per_step: ICoord::from_num(12).into(),
-                            degrees_per_step: (ICoord::lit("1.8") / ICoord::from_num(16)).into(),
-                            unit: motion::AxisUnit::Millimeters,
-                        },
-                        /* Z */
-                        motion::Axis {
-                            microns_per_step: (ICoord::from_num(6)).into(),
-                            degrees_per_step: (ICoord::lit("0.9") / ICoord::from_num(16)).into(),
-                            unit: motion::AxisUnit::Millimeters,
-                        },
-                        /* C */
-                        motion::Axis {
-                            microns_per_step: ICoord::from_num(12).into(),
-                            degrees_per_step: (ICoord::lit("1.8") / ICoord::from_num(16)).into(),
-                            unit: motion::AxisUnit::Rotations,
-                        },
-                    ]),
+                    motion::State::new(
+                        [
+                            /* X */
+                            motion::Axis {
+                                microns_per_step: ICoord::from_num(12).into(),
+                                degrees_per_step: (ICoord::lit("1.8") / ICoord::from_num(16))
+                                    .into(),
+                                unit: motion::AxisUnit::Millimeters,
+                                length: ICoord::from_num(140),
+                            },
+                            /* Z */
+                            motion::Axis {
+                                microns_per_step: (ICoord::from_num(6)).into(),
+                                degrees_per_step: (ICoord::lit("0.9") / ICoord::from_num(16))
+                                    .into(),
+                                unit: motion::AxisUnit::Millimeters,
+                                length: ICoord::from_num(400),
+                            },
+                            /* C */
+                            motion::Axis {
+                                microns_per_step: ICoord::from_num(12).into(),
+                                degrees_per_step: (ICoord::lit("1.8") / ICoord::from_num(16))
+                                    .into(),
+                                unit: motion::AxisUnit::Rotations,
+                                length: ICoord::from_num(0),
+                            },
+                        ],
+                        status_leds_control,
+                    ),
                     driver,
                     command_rx,
                     status_tx,

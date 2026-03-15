@@ -95,6 +95,9 @@ pub(crate) enum Status {
     Ready,
     WifiError,
     ExecutingCommand,
+    XHomingFailed,
+    ZHomingFailed,
+    BothHomingFailed,
 }
 
 pub(crate) struct Runner<'a> {
