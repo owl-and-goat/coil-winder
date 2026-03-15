@@ -1,6 +1,7 @@
+use core::fmt::{self, Display};
 use core::time::Duration;
 
-use fixed::{types::extra::U10, FixedU32};
+use fixed::{FixedU32, types::extra::U10};
 
 // TODO(aspen): Consider making this signed after all, in case we want to rotate the spindle
 // backwards(?)
@@ -44,4 +45,55 @@ pub enum Command<const AXES: usize> {
     DisableAllSteppers,
     /// M114
     GetCurrentPosition,
+}
+
+impl<const AXES: usize> Command<AXES> {
+    pub fn display<'a>(&'a self, axis_labels: [char; AXES]) -> DisplayCommand<'a, AXES> {
+        DisplayCommand {
+            command: self,
+            axis_labels,
+        }
+    }
+}
+
+pub struct DisplayCommand<'a, const AXES: usize> {
+    command: &'a Command<AXES>,
+    axis_labels: [char; AXES],
+}
+
+impl<const AXES: usize> Display for DisplayCommand<'_, AXES> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self.command {
+            Command::RapidMove(pos) => {
+                write!(f, "G0")?;
+                self.fmt_pos(f, pos)
+            }
+            Command::LinearMove(pos) => {
+                write!(f, "G1")?;
+                self.fmt_pos(f, pos)
+            }
+            Command::Dwell(duration) => write!(f, "G4 P{}", duration.as_millis()),
+            Command::Park(None) => write!(f, "G27"),
+            Command::Park(Some(pos)) => {
+                write!(f, "G27")?;
+                self.fmt_pos(f, pos)
+            }
+            Command::Home => write!(f, "G28"),
+            Command::Stop => write!(f, "M0"),
+            Command::EnableAllSteppers => write!(f, "M17"),
+            Command::DisableAllSteppers => write!(f, "M18"),
+            Command::GetCurrentPosition => write!(f, "M114"),
+        }
+    }
+}
+
+impl<const AXES: usize> DisplayCommand<'_, AXES> {
+    fn fmt_pos(&self, f: &mut fmt::Formatter<'_>, pos: &UPos<AXES>) -> fmt::Result {
+        for (i, coord) in pos.0.iter().enumerate() {
+            if let Some(c) = coord {
+                write!(f, " {}{}", self.axis_labels[i], c)?;
+            }
+        }
+        Ok(())
+    }
 }

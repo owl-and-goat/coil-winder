@@ -4,6 +4,7 @@ use core::time::Duration;
 
 use heapless::Vec;
 use nom::{
+    AsChar, IResult, Parser,
     branch::alt,
     bytes::{complete::take_while1, streaming::tag},
     character::{complete::multispace1, streaming::char},
@@ -11,7 +12,6 @@ use nom::{
     error::ErrorKind,
     number::complete::recognize_float,
     sequence::preceded,
-    AsChar, IResult, Parser,
 };
 
 use crate::ast::{Command, UCoord, UPos};
@@ -253,5 +253,80 @@ mod tests {
         let (rem, res) = command(XYZF)(b"G28").unwrap();
         assert_eq!(rem, b"");
         assert_eq!(res, Command::Home);
+    }
+
+    mod round_trip {
+        use super::*;
+
+        const XYZ: [char; 3] = ['X', 'Y', 'Z'];
+
+        fn round_trip(cmd: Command<3>) {
+            let formatted = cmd.display(XYZ).to_string();
+            let (rem, parsed) = command(XYZ)(formatted.as_bytes()).unwrap();
+            assert_eq!(
+                rem,
+                b"",
+                "unparsed remainder: {:?}",
+                core::str::from_utf8(rem)
+            );
+            assert_eq!(parsed, cmd, "round-trip failed for: {formatted}");
+        }
+
+        #[test]
+        fn stop() {
+            round_trip(Command::Stop);
+        }
+
+        #[test]
+        fn home() {
+            round_trip(Command::Home);
+        }
+
+        #[test]
+        fn enable_steppers() {
+            round_trip(Command::EnableAllSteppers);
+        }
+
+        #[test]
+        fn disable_steppers() {
+            round_trip(Command::DisableAllSteppers);
+        }
+
+        #[test]
+        fn get_position() {
+            round_trip(Command::GetCurrentPosition);
+        }
+
+        #[test]
+        fn dwell() {
+            round_trip(Command::Dwell(Duration::from_millis(500)));
+        }
+
+        #[test]
+        fn rapid_move_full() {
+            round_trip(Command::RapidMove(UPos([
+                Some(FixedU32::from_num(10)),
+                Some(FixedU32::from_num(20)),
+                Some(FixedU32::from_num(30)),
+            ])));
+        }
+
+        #[test]
+        fn rapid_move_partial() {
+            round_trip(Command::RapidMove(UPos([
+                Some(FixedU32::from_num(10)),
+                None,
+                Some(FixedU32::from_num(30)),
+            ])));
+        }
+
+        #[test]
+        fn linear_move() {
+            round_trip(Command::LinearMove(UPos([
+                Some(FixedU32::from_num(5)),
+                Some(FixedU32::from_num(15)),
+                None,
+            ])));
+        }
     }
 }
