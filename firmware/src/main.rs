@@ -9,7 +9,7 @@ use cyw43_pio::{PioSpi, DEFAULT_CLOCK_DIVIDER};
 use defmt::*;
 use embassy_executor::{Executor, Spawner};
 use embassy_futures::select::Either;
-use embassy_net::{Ipv4Cidr, StackResources};
+use embassy_net::StackResources;
 use embassy_rp::{
     bind_interrupts,
     clocks::RoscRng,
@@ -21,7 +21,6 @@ use embassy_rp::{
 };
 use embassy_sync::{blocking_mutex::raw::CriticalSectionRawMutex, channel};
 use embassy_time::{with_timeout, Duration};
-use heapless::Vec;
 use static_cell::StaticCell;
 
 use crate::{
@@ -188,17 +187,11 @@ async fn core0(
         .set_power_management(cyw43::PowerManagementMode::Performance)
         .await;
 
-    // Init network stack
+    // Init network stack with DHCP
     let (stack, runner) = embassy_net::new(
         net_device,
-        // Config::dhcpv4(Default::default())
-        embassy_net::Config::ipv4_static(embassy_net::StaticConfigV4 {
-            // TODO(aspen): Make these configurable at compile-time
-            address: Ipv4Cidr::new(Ipv4Addr::new(10, 0, 0, 40), 16),
-            dns_servers: Vec::new(),
-            gateway: Some(Ipv4Addr::new(10, 0, 0, 1)),
-        }),
-        make_static!(StackResources<3>, StackResources::new()),
+        embassy_net::Config::dhcpv4(Default::default()),
+        make_static!(StackResources<4>, StackResources::new()),
         RoscRng.next_u64(),
     );
     spawner.must_spawn(net_task(runner));
@@ -225,6 +218,14 @@ async fn core0(
             }
         }
     }
+    // Wait for DHCP to assign an IP
+    info!("Waiting for DHCP...");
+    stack.wait_config_up().await;
+    let our_ip = stack
+        .config_v4()
+        .map(|c| c.address.address())
+        .unwrap_or(Ipv4Addr::UNSPECIFIED);
+    info!("DHCP assigned IP: {}", our_ip);
     status_leds.set_status(Status::Ready);
 
     // Add mDNS multicast MAC address to cyw43 hardware filter
@@ -236,7 +237,6 @@ async fn core0(
     }
 
     // Start mDNS responder
-    let our_ip = Ipv4Addr::new(10, 0, 0, 40);
     spawner.must_spawn(mdns_task(stack, MDNS_HOSTNAME, our_ip, RoscRng));
 
     server::Server {
