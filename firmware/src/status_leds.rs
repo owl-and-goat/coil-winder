@@ -1,10 +1,7 @@
 use core::sync::atomic::Ordering;
 
-use embassy_futures::select::{select, Either};
 use embassy_rp::gpio::{Level, Output};
-use embassy_sync::{blocking_mutex::raw::CriticalSectionRawMutex, signal::Signal};
 use embassy_time::{Duration, Timer};
-use futures::future;
 use portable_atomic_enum::atomic_enum;
 
 #[derive(Clone, Copy, defmt::Format)]
@@ -28,10 +25,6 @@ pub struct PerColor<T> {
 }
 
 impl<T> PerColor<T> {
-    pub fn values(&self) -> impl Iterator<Item = &T> {
-        [&self.amber, &self.green, &self.red].into_iter()
-    }
-
     pub fn values_mut(&mut self) -> impl Iterator<Item = &mut T> {
         [&mut self.amber, &mut self.green, &mut self.red].into_iter()
     }
@@ -73,34 +66,18 @@ pub(crate) enum Behavior {
     Blink(BlinkSpeed),
 }
 
-impl Behavior {
-    fn is_blink(&self) -> bool {
-        matches!(self, Self::Blink(_))
-    }
-
-    fn blink_speed(&self) -> Option<BlinkSpeed> {
-        match *self {
-            Behavior::Blink(blink_speed) => Some(blink_speed),
-            Behavior::Off | Behavior::On => None,
-        }
-    }
-}
-
 pub(crate) struct Control {
-    signal: Signal<CriticalSectionRawMutex, Status>,
     status: AtomicStatus,
 }
 
 impl Control {
     pub(crate) fn new() -> Self {
         Control {
-            signal: Signal::new(),
             status: AtomicStatus::from(Status::default()),
         }
     }
 
     pub(crate) fn set_status(&self, status: Status) {
-        self.signal.signal(status);
         self.status.store(status, Ordering::Relaxed);
     }
 
@@ -150,45 +127,26 @@ impl<'a> Runner<'a> {
     pub(crate) async fn run(mut self) -> ! {
         self.pins.values_mut().for_each(|p| p.set_low());
 
+        // "we can poll for the status every 500ms, it's *fine*, computers are fast!" - nausicaä
         loop {
-            match select(
-                self.control.signal.wait(),
-                if self.is_blinking() {
-                    future::Either::Right(Timer::after(BLINK_DELAY))
-                } else {
-                    future::Either::Left(future::pending())
-                },
-            )
-            .await
-            {
-                Either::First(status) => {
-                    self.behavior = (self.status_behavior)(status);
-                    for (color, behavior) in self.behavior.iter() {
-                        match behavior {
-                            Behavior::Off => self.pins.get_mut(color).set_low(),
-                            Behavior::On => self.pins.get_mut(color).set_high(),
-                            Behavior::Blink(_) => { /* Handled in select loop */ }
-                        }
-                    }
-                }
-                Either::Second(()) => {
-                    for color in Color::iter() {
-                        if let Some(speed) = self.behavior.get(color).blink_speed() {
-                            *self.blink.get_mut(color) = (self.blink.get(color) + 1) % 4;
-                            let v = self.blink.get(color);
-                            let on = match speed {
-                                BlinkSpeed::Slow => v & 2 != 0,
-                                BlinkSpeed::Fast => v & 1 != 0,
-                            };
-                            self.pins.amber.set_level(Level::from(on));
-                        }
+            Timer::after(BLINK_DELAY).await;
+            let status = self.control.status();
+            self.behavior = (self.status_behavior)(status);
+            for (color, behavior) in self.behavior.iter() {
+                match behavior {
+                    Behavior::Off => self.pins.get_mut(color).set_low(),
+                    Behavior::On => self.pins.get_mut(color).set_high(),
+                    Behavior::Blink(speed) => {
+                        *self.blink.get_mut(color) = (self.blink.get(color) + 1) % 4;
+                        let v = self.blink.get(color);
+                        let on = match speed {
+                            BlinkSpeed::Slow => v & 2 != 0,
+                            BlinkSpeed::Fast => v & 1 != 0,
+                        };
+                        self.pins.amber.set_level(Level::from(on));
                     }
                 }
             }
         }
-    }
-
-    fn is_blinking(&self) -> bool {
-        self.behavior.values().any(|b| b.is_blink())
     }
 }
