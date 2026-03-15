@@ -4,7 +4,7 @@
 
 use core::{net::Ipv4Addr, ptr::addr_of_mut};
 
-use cyw43::{Control, JoinOptions};
+use cyw43::JoinOptions;
 use cyw43_pio::{PioSpi, DEFAULT_CLOCK_DIVIDER};
 use defmt::*;
 use embassy_executor::{Executor, Spawner};
@@ -13,18 +13,21 @@ use embassy_net::{Ipv4Cidr, StackResources};
 use embassy_rp::{
     bind_interrupts,
     clocks::RoscRng,
-    gpio::{self, Level, Output},
+    gpio::{Level, Output},
     multicore::Stack,
     peripherals::{DMA_CH0, PIN_0, PIO0},
     pio::{InterruptHandler, Pio},
     Peri,
 };
 use embassy_sync::{blocking_mutex::raw::CriticalSectionRawMutex, channel};
-use embassy_time::{with_timeout, Duration, Timer};
+use embassy_time::{with_timeout, Duration};
 use heapless::Vec;
 use static_cell::StaticCell;
 
-use crate::motion::ICoord;
+use crate::{
+    motion::ICoord,
+    status_leds::{Behavior, BlinkSpeed, Status},
+};
 
 use {defmt_rtt as _, panic_probe as _};
 
@@ -33,6 +36,7 @@ pub(crate) mod util;
 mod driver;
 mod motion;
 mod server;
+mod status_leds;
 
 pub(crate) const WIFI_NETWORK: Option<&str> = option_env!("WIFI_NETWORK");
 pub(crate) const WIFI_PASSWORD: Option<&str> = option_env!("WIFI_PASSWORD");
@@ -90,56 +94,44 @@ async fn motion_task(
     motion.run(driver, command_rx, status_tx).await;
 }
 
-async fn blink_once(control: &mut Control<'_>) {
-    const DELAY: Duration = Duration::from_millis(500);
-    control.gpio_set(0, true).await;
-    Timer::after(DELAY).await;
-    control.gpio_set(0, false).await;
+#[embassy_executor::task]
+async fn status_leds_task(runner: status_leds::Runner<'static>) -> ! {
+    runner.run().await
 }
 
-struct StatusLeds {
-    amber: Output<'static>,
-    green: Output<'static>,
-    red: Output<'static>,
-}
-
-#[derive(Clone, Copy, defmt::Format)]
-enum Color {
-    Amber,
-    Green,
-    Red,
-}
-
-impl StatusLeds {
-    pub fn setup(&mut self) {
-        self.all_pins()
-            .for_each(|p| p.set_drive_strength(gpio::Drive::_2mA));
-    }
-
-    fn pin(&mut self, color: Color) -> &mut Output<'static> {
-        match color {
-            Color::Amber => &mut self.amber,
-            Color::Green => &mut self.green,
-            Color::Red => &mut self.red,
-        }
-    }
-
-    fn all_pins(&mut self) -> impl Iterator<Item = &mut Output<'static>> {
-        [&mut self.amber, &mut self.green, &mut self.red].into_iter()
-    }
-
-    pub fn set_exclusive(&mut self, color: Color) {
-        self.all_pins().for_each(|p| p.set_low());
-        debug!("Setting color: {:?}", color);
-        self.pin(color).set_high();
+fn status_behavior(status: Status) -> status_leds::PerColor<Behavior> {
+    match status {
+        // TODO
+        Status::Initializing => status_leds::PerColor {
+            amber: Behavior::On,
+            ..Default::default()
+        },
+        Status::WifiConnecting => status_leds::PerColor {
+            amber: Behavior::Blink(BlinkSpeed::Fast),
+            ..Default::default()
+        },
+        Status::Ready => status_leds::PerColor {
+            green: Behavior::On,
+            ..Default::default()
+        },
+        Status::WifiError => status_leds::PerColor {
+            red: Behavior::On,
+            ..Default::default()
+        },
+        Status::ExecutingCommand => status_leds::PerColor {
+            green: Behavior::On,
+            amber: Behavior::Blink(BlinkSpeed::Slow),
+            ..Default::default()
+        },
     }
 }
+
 #[embassy_executor::task]
 async fn core0(
     pwr: Output<'static>,
     spi: PioSpi<'static, PIO0, 0, DMA_CH0>,
     spawner: Spawner,
-    mut status_leds: StatusLeds,
+    status_leds_runner: status_leds::Runner<'static>,
     command_tx: channel::Sender<
         'static,
         CriticalSectionRawMutex,
@@ -153,7 +145,9 @@ async fn core0(
         COMMAND_BUFFER_SIZE,
     >,
 ) -> ! {
-    status_leds.setup();
+    let status_leds = status_leds_runner.control();
+    spawner.must_spawn(status_leds_task(status_leds_runner));
+    status_leds.set_status(Status::Initializing);
 
     let fw = include_bytes!("../cyw43-firmware/43439A0.bin");
     let clm = include_bytes!("../cyw43-firmware/43439A0_clm.bin");
@@ -183,7 +177,7 @@ async fn core0(
     );
     spawner.must_spawn(net_task(runner));
 
-    status_leds.set_exclusive(Color::Amber);
+    status_leds.set_status(Status::WifiConnecting);
     while let Err(err) = match with_timeout(
         Duration::from_secs(5),
         control.join(
@@ -199,18 +193,20 @@ async fn core0(
     } {
         match err {
             Either::First(timeout) => error!("Join timed out, retrying ({})", timeout),
-            Either::Second(err) => info!("join failed with status={}", err.status),
+            Either::Second(err) => {
+                status_leds.set_status(Status::WifiError);
+                info!("join failed with status={}", err.status)
+            }
         }
-        status_leds.set_exclusive(Color::Red);
     }
-    status_leds.set_exclusive(Color::Green);
+    status_leds.set_status(Status::Ready);
 
     server::Server {
         stack,
-        control,
         command_tx,
         status_rx,
         command_id_gen: 0,
+        status_leds,
     }
     .run()
     .await
@@ -223,6 +219,17 @@ static EXECUTOR1: StaticCell<Executor> = StaticCell::new();
 #[cortex_m_rt::entry]
 fn main() -> ! {
     let p = embassy_rp::init(Default::default());
+
+    let status = make_static!(status_leds::Control, status_leds::Control::new());
+    let status_leds = status_leds::Runner::new(
+        status,
+        status_leds::PerColor {
+            amber: Output::new(p.PIN_7, Level::Low),
+            green: Output::new(p.PIN_10, Level::Low),
+            red: Output::new(p.PIN_13, Level::Low),
+        },
+        status_behavior,
+    );
 
     let pwr = Output::new(p.PIN_23, Level::Low);
     let cs = Output::new(p.PIN_25, Level::High);
@@ -323,17 +330,6 @@ fn main() -> ! {
 
     let executor0 = EXECUTOR0.init(Executor::new());
     executor0.run(|spawner| {
-        spawner.must_spawn(core0(
-            pwr,
-            spi,
-            spawner,
-            StatusLeds {
-                amber: Output::new(p.PIN_7, Level::Low),
-                green: Output::new(p.PIN_10, Level::Low),
-                red: Output::new(p.PIN_13, Level::Low),
-            },
-            command_tx,
-            status_rx,
-        ))
+        spawner.must_spawn(core0(pwr, spi, spawner, status_leds, command_tx, status_rx))
     })
 }

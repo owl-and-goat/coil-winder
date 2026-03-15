@@ -41,14 +41,15 @@ embedded-io = { version = "0.6.1", features = ["defmt-03"] }
 #embedded-storage = { version = "0.3" }
 static_cell = "2"
 portable-atomic = { version = "1.13", features = ["critical-section"] }
+portable_atomic_enum = { version = "0.3.1", features = ["portable-atomic"] }
 log = "0.4"
 pio-proc = "0.3"
 pio = "0.3.0"
 rand = { version = "0.9.2", default-features = false }
+fixed-sqrt = "0.3.0"
 
 # Local dependencies
 gcode = { path = "../gcode" }
-fixed-sqrt = "0.3.0"
 
 [profile.release]
 debug = 2

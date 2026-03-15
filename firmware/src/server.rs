@@ -1,4 +1,3 @@
-use cyw43::Control;
 use defmt::{debug, info, warn};
 use embassy_futures::select::{select, Either};
 use embassy_net::tcp::TcpSocket;
@@ -6,11 +5,13 @@ use embassy_sync::{blocking_mutex::raw::CriticalSectionRawMutex, channel};
 use embassy_time::Duration;
 use embedded_io_async::Write;
 
-use crate::{blink_once, CommandId, MotionStatusMsg, AXES, AXIS_LABELS, COMMAND_BUFFER_SIZE, PORT};
+use crate::{
+    status_leds::{self, Status},
+    CommandId, MotionStatusMsg, AXES, AXIS_LABELS, COMMAND_BUFFER_SIZE, PORT,
+};
 
 pub struct Server {
     pub stack: embassy_net::Stack<'static>,
-    pub control: Control<'static>,
     pub command_tx: channel::Sender<
         'static,
         CriticalSectionRawMutex,
@@ -20,6 +21,7 @@ pub struct Server {
     pub status_rx:
         channel::Receiver<'static, CriticalSectionRawMutex, MotionStatusMsg, COMMAND_BUFFER_SIZE>,
     pub command_id_gen: u32,
+    pub status_leds: &'static status_leds::Control,
 }
 
 impl Server {
@@ -47,7 +49,6 @@ impl Server {
                 socket.remote_endpoint()
             );
 
-            blink_once(&mut self.control).await;
             loop {
                 match select(socket.read(&mut buf[n..]), self.status_rx.receive()).await {
                     Either::Second(MotionStatusMsg::CommandFinished(CommandId(id))) => {
@@ -112,8 +113,6 @@ impl Server {
                             }
                         };
 
-                        blink_once(&mut self.control).await;
-
                         match command {
                             gcode::Command::Stop => {
                                 // TODO(aspen): Also cancel the current command
@@ -125,6 +124,8 @@ impl Server {
                                 }
                             }
                             command => {
+                                let prev_status = self.status_leds.status();
+                                self.status_leds.set_status(Status::ExecutingCommand);
                                 let command_id = self.gen_command_id();
                                 self.command_tx.send((command_id, command)).await;
 
@@ -137,6 +138,7 @@ impl Server {
                                         warn!("write error: {}", e);
                                     }
                                 }
+                                self.status_leds.set_status(prev_status);
                             }
                         }
                     }
