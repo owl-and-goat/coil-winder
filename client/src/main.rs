@@ -393,7 +393,11 @@ async fn main() -> Result<()> {
                     cancelled.store(true, Ordering::Relaxed);
                     eprintln!("\nInterrupted! Sending stop command...");
                     if let Err(e) = client.send(
-                        format!("{}\n", gcode::Command::Stop.display(AXIS_LABELS)).to_owned()
+                        format!(
+                            "{}\n{}\n",
+                            gcode::Command::Stop.display(AXIS_LABELS),
+                            gcode::Command::DisableAllSteppers.display(AXIS_LABELS)
+                        )
                     ).await {
                         eprintln!("Failed to send stop command: {e}");
                     }
