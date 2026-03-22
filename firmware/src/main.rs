@@ -13,7 +13,7 @@ use embassy_net::StackResources;
 use embassy_rp::{
     bind_interrupts,
     clocks::RoscRng,
-    gpio::{Level, Output},
+    gpio::{Input, Level, Output, Pull},
     multicore::Stack,
     peripherals::{DMA_CH0, PIN_0, PIO0},
     pio::{InterruptHandler, Pio},
@@ -126,6 +126,10 @@ fn status_behavior(status: Status) -> status_leds::PerColor<Behavior> {
         },
         Status::Ready => status_leds::PerColor {
             green: Behavior::On,
+            ..Default::default()
+        },
+        Status::Paused => status_leds::PerColor {
+            green: Behavior::Blink(BlinkSpeed::Fast),
             ..Default::default()
         },
         Status::WifiError => status_leds::PerColor {
@@ -249,7 +253,6 @@ async fn core0(
         command_tx,
         status_rx,
         command_id_gen: 0,
-        status_leds,
     }
     .run()
     .await
@@ -373,6 +376,7 @@ fn main() -> ! {
                             },
                         ],
                         status_leds_control,
+                        Input::new(p.PIN_22, Pull::Up),
                     ),
                     driver,
                     command_rx,

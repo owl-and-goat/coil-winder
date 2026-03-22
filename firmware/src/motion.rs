@@ -1,6 +1,6 @@
 use az::SaturatingCast;
 use defmt::{info, Display2Format, Format};
-use embassy_rp::pio;
+use embassy_rp::{gpio, pio};
 use embassy_sync::{
     blocking_mutex::raw::{CriticalSectionRawMutex, RawMutex},
     channel,
@@ -90,16 +90,22 @@ pub struct State {
     feedrate: MillimetersPerSecond,
     position: [UCoord; AXES],
     axes: [Axis; AXES],
+    resume_button: gpio::Input<'static>,
     status_leds: &'static status_leds::Control,
 }
 
 impl State {
-    pub fn new(axes: [Axis; AXES], status_leds: &'static status_leds::Control) -> Self {
+    pub fn new(
+        axes: [Axis; AXES],
+        status_leds: &'static status_leds::Control,
+        resume_button: gpio::Input<'static>,
+    ) -> Self {
         Self {
             is_homed: false,
             feedrate: MillimetersPerSecond(UCoord::lit("1")),
             position: [UCoord::ZERO; AXES],
             axes,
+            resume_button,
             status_leds,
         }
     }
@@ -146,6 +152,7 @@ impl State {
                     }
                 }
                 Command::Home { f: speed } => {
+                    self.status_leds.set_status(Status::ExecutingCommand);
                     let speed = speed
                         .map(MillimetersPerSecond)
                         .unwrap_or(DEFAULT_HOME_SPEED);
@@ -183,6 +190,7 @@ impl State {
                     }
                 }
                 Command::RapidMove(target_pos) | Command::LinearMove(target_pos) => {
+                    self.status_leds.set_status(Status::ExecutingCommand);
                     if let Some(feedrate) = target_pos.0[3 /* feedrate is the last axis */] {
                         self.feedrate = MillimetersPerSecond(feedrate);
                     }
@@ -286,8 +294,13 @@ impl State {
                         f
                     );
                 }
+                Command::Pause => {
+                    self.status_leds.set_status(Status::Paused);
+                    self.resume_button.wait_for_low().await;
+                }
                 Command::Park(_) => {}
             }
+            self.status_leds.set_status(Status::Ready);
             info!("command {} done (t={:tus})", command_id, ts());
             status_tx
                 .send(MotionStatusMsg::CommandFinished(command_id))

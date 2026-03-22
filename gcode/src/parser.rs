@@ -145,6 +145,7 @@ pub fn command<const AXES: usize>(
             value(Command::DisableAllSteppers, m("18")),
             home,
             value(Command::GetCurrentPosition, m("114")),
+            value(Command::Pause, m("226")),
         ))
         .parse(i)
     }
@@ -261,6 +262,12 @@ mod tests {
     #[test]
     fn m18_disable_all_steppers() {
         test_parse!(XYZF, b"M18", Command::DisableAllSteppers);
+    }
+
+    #[test]
+    fn m25_pause() {
+        test_parse!(XYZF, b"M226", Command::Pause);
+        test_parse!(XYZ, b"M226", Command::Pause);
     }
 
     #[test]

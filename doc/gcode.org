@@ -28,6 +28,10 @@
 
   Prints current position to debug console
 
++ *M226* - Pause
+
+  Pause until the "Resume" button is pressed
+
 * Standard preamble
 
 #+begin_src gcode

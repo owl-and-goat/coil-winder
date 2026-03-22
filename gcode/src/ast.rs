@@ -45,6 +45,8 @@ pub enum Command<const AXES: usize> {
     DisableAllSteppers,
     /// M114
     GetCurrentPosition,
+    /// M226
+    Pause,
 }
 
 impl<const AXES: usize> Command<AXES> {
@@ -84,6 +86,7 @@ impl<const AXES: usize> Display for DisplayCommand<'_, AXES> {
             Command::EnableAllSteppers => write!(f, "M17"),
             Command::DisableAllSteppers => write!(f, "M18"),
             Command::GetCurrentPosition => write!(f, "M114"),
+            Command::Pause => write!(f, "M226"),
         }
     }
 }

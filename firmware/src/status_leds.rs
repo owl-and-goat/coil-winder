@@ -1,5 +1,6 @@
 use core::sync::atomic::Ordering;
 
+use defmt::debug;
 use embassy_rp::gpio::{Level, Output};
 use embassy_time::{Duration, Timer};
 use portable_atomic_enum::atomic_enum;
@@ -78,11 +79,11 @@ impl Control {
     }
 
     pub(crate) fn set_status(&self, status: Status) {
-        self.status.store(status, Ordering::Relaxed);
+        self.status.store(status, Ordering::Release);
     }
 
     pub(crate) fn status(&self) -> Status {
-        self.status.load(Ordering::Relaxed)
+        self.status.load(Ordering::Acquire)
     }
 }
 
@@ -94,6 +95,7 @@ pub(crate) enum Status {
     WifiConnecting,
     WaitingForDhcp,
     Ready,
+    Paused,
     WifiError,
     ExecutingCommand,
     XHomingFailed,
@@ -147,7 +149,7 @@ impl<'a> Runner<'a> {
                             BlinkSpeed::Slow => v & 2 != 0,
                             BlinkSpeed::Fast => v & 1 != 0,
                         };
-                        self.pins.amber.set_level(Level::from(on));
+                        self.pins.get_mut(color).set_level(Level::from(on));
                     }
                 }
             }
