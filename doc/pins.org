@@ -61,3 +61,5 @@ side facing up.
   - amber: pin 7
   - green: pin 10
   - red: pin 13
+* Pause
+- pin 22
