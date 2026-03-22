@@ -174,7 +174,7 @@
                     }))
 
   (->> (scramble-wind {:turns 5000
-                       :bobbin/position 43.8
+                       :bobbin/position 42.35
                        :bobbin/width 8.25
                        :wire/width 0.06335
                        :feedrate 5
