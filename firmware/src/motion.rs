@@ -80,7 +80,7 @@ impl MillimetersPerSecond {
     }
 }
 
-const HOME_SPEED: MillimetersPerSecond = MillimetersPerSecond(UCoord::lit("120"));
+const DEFAULT_HOME_SPEED: MillimetersPerSecond = MillimetersPerSecond(UCoord::lit("120"));
 
 const AXES: usize = 3;
 
@@ -145,9 +145,12 @@ impl State {
                         *coord = UCoord::ZERO;
                     }
                 }
-                Command::Home { f: _, /* TODO */ } => {
+                Command::Home { f: speed } => {
+                    let speed = speed
+                        .map(MillimetersPerSecond)
+                        .unwrap_or(DEFAULT_HOME_SPEED);
                     let speeds =
-                        [HOME_SPEED; 2].zip_with([self.axes[0], self.axes[1]], |speed, axis| {
+                        [speed; 2].zip_with([self.axes[0], self.axes[1]], |speed, axis| {
                             match axis.unit {
                                 AxisUnit::Millimeters => (
                                     (axis.length * ICoord::from_num(1000)

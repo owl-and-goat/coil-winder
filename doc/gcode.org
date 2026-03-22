@@ -14,7 +14,9 @@
 
 + *G4 <dur>* - Dwell (sleep)
 
-+ *G28* - Home
++ *G28 [F<speed>]* - Home
+
+  *F* is optional feedrate, in millimeters per second. Defaults to 120
 
 + *M0* - Stop
 
