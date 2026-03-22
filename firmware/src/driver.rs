@@ -137,8 +137,8 @@ impl<'d, T: pio::Instance, const SM: usize> Axis<'d, T, SM> {
         sm.set_enable(false);
 
         Self {
-            sm: sm,
-            irq: irq,
+            sm,
+            irq,
             dir_pin,
             step_pin,
             zero_limit_pin,
@@ -155,11 +155,11 @@ impl<'d, T: pio::Instance, const SM: usize> Axis<'d, T, SM> {
         cfg.set_out_pins(&[&self.dir_pin]);
 
         if let Some(zero_limit_pin) = &self.zero_limit_pin {
-            cfg.set_jmp_pin(&zero_limit_pin);
+            cfg.set_jmp_pin(zero_limit_pin);
         }
 
         cfg.clock_divider = clock_divider;
-        cfg.use_program(&program, &[&self.step_pin]);
+        cfg.use_program(program, &[&self.step_pin]);
         self.sm.set_config(&cfg);
     }
 

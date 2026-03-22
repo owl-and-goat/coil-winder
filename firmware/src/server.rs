@@ -52,7 +52,7 @@ impl Server {
                         let mut done = [0u8; 64];
                         {
                             use embedded_io::Write;
-                            write!(&mut done[..], "(done {id})\n").unwrap();
+                            writeln!(&mut done[..], "(done {id})").unwrap();
                         }
                         if let Err(e) = socket.write_all(&done).await {
                             warn!("write error: {}", e);
@@ -127,7 +127,7 @@ impl Server {
                                     let mut resp_buf = [0u8; 64];
                                     use embedded_io::Write;
                                     resp_buf.fill(0);
-                                    write!(&mut resp_buf[..], "(ack {})\n", command_id.0).unwrap();
+                                    writeln!(&mut resp_buf[..], "(ack {})", command_id.0).unwrap();
                                     if let Err(e) = socket.write_all(&resp_buf).await {
                                         warn!("write error: {}", e);
                                     }

@@ -227,7 +227,7 @@ impl Client {
             let mut lines = buf_reader.lines();
             while let Ok(Some(line)) = lines.next_line().await {
                 debug!(line, "got line from server");
-                match lexpr::from_str(&line.trim().trim_matches('\0').trim()) {
+                match lexpr::from_str(line.trim().trim_matches('\0').trim()) {
                     Err(err) => {
                         warn!(%err, "Invalid s-expression from server");
                     }
