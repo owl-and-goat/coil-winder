@@ -1,6 +1,5 @@
 use core::sync::atomic::Ordering;
 
-use defmt::debug;
 use embassy_rp::gpio::{Level, Output};
 use embassy_time::{Duration, Timer};
 use portable_atomic_enum::atomic_enum;
