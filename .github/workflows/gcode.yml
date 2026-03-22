@@ -28,6 +28,9 @@ jobs:
           rustup component add clippy
           cargo clippy
         working-directory: gcode
+      - name: Format
+        run: cargo fmt --check
+        working-directory: gcode
       - name: Build
         run: cargo build
         working-directory: gcode

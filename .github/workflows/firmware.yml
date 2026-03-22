@@ -30,6 +30,9 @@ jobs:
           rustup component add clippy
           cargo clippy
         working-directory: firmware
+      - name: Format
+        run: cargo fmt --check
+        working-directory: firmware
       - name: Build
         run: cargo build
         working-directory: firmware

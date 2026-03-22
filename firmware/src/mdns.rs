@@ -59,7 +59,13 @@ where
     R: RngCore,
 {
     debug!("mDNS: binding to {:?}", IPV4_DEFAULT_SOCKET);
-    let mut socket = io::bind(stack, IPV4_DEFAULT_SOCKET, Some(Ipv4Addr::UNSPECIFIED), None).await?;
+    let mut socket = io::bind(
+        stack,
+        IPV4_DEFAULT_SOCKET,
+        Some(Ipv4Addr::UNSPECIFIED),
+        None,
+    )
+    .await?;
     debug!("mDNS: bound successfully, joining multicast");
 
     let (recv, send) = socket.split();

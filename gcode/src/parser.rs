@@ -4,6 +4,7 @@ use core::time::Duration;
 
 use heapless::Vec;
 use nom::{
+    AsChar, IResult, Parser,
     branch::alt,
     bytes::{complete::take_while1, streaming::tag},
     character::{complete::multispace1, streaming::char},
@@ -11,7 +12,6 @@ use nom::{
     error::ErrorKind,
     number::complete::recognize_float,
     sequence::preceded,
-    AsChar, IResult, Parser,
 };
 
 use crate::ast::{Command, UCoord, UPos};

@@ -1,7 +1,7 @@
 use core::fmt::{self, Display};
 use core::time::Duration;
 
-use fixed::{types::extra::U10, FixedU32};
+use fixed::{FixedU32, types::extra::U10};
 
 // TODO(aspen): Consider making this signed after all, in case we want to rotate the spindle
 // backwards(?)
