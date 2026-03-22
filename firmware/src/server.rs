@@ -36,6 +36,7 @@ impl Server {
             let mut n = 0;
             socket.set_timeout(Some(Duration::from_secs(10)));
 
+            debug!("accepting connection...");
             if let Err(e) = socket.accept(PORT).await {
                 warn!("accept error: {}", e);
                 continue;
@@ -46,7 +47,19 @@ impl Server {
             );
 
             loop {
-                match select(socket.wait_read_ready(), self.status_rx.receive()).await {
+                if !socket.may_recv() {
+                    info!("Remote endpoint closed connection");
+                    continue 'accept;
+                }
+                info!("Waiting for next event...");
+                match select(
+                    // TODO: Ideally, this would use wait_read_ready() instead, but then we have no
+                    // way of noticing that the socket has been closed (this is an embassy bug!)
+                    socket.read(&mut buf[n..]),
+                    self.status_rx.receive(),
+                )
+                .await
+                {
                     Either::Second(MotionStatusMsg::CommandFinished(CommandId(id))) => {
                         debug!("Sending status message");
                         let mut done = [0u8; 64];
@@ -58,14 +71,12 @@ impl Server {
                             warn!("write error: {}", e);
                         }
                     }
-                    Either::First(()) => {
-                        match socket.read(&mut buf[n..]).await {
-                            Ok(read) => n += read,
-                            Err(err) => {
-                                warn!("read error: {}", err);
-                                continue 'accept;
-                            }
-                        };
+                    Either::First(Err(err)) => {
+                        warn!("read error: {}", err);
+                        continue 'accept;
+                    }
+                    Either::First(Ok(read)) => {
+                        n += read;
                         debug!("reading command, starting at {}", n);
                         let command = {
                             'read_command: loop {
