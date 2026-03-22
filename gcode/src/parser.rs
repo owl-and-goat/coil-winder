@@ -4,7 +4,6 @@ use core::time::Duration;
 
 use heapless::Vec;
 use nom::{
-    AsChar, IResult, Parser,
     branch::alt,
     bytes::{complete::take_while1, streaming::tag},
     character::{complete::multispace1, streaming::char},
@@ -12,6 +11,7 @@ use nom::{
     error::ErrorKind,
     number::complete::recognize_float,
     sequence::preceded,
+    AsChar, IResult, Parser,
 };
 
 use crate::ast::{Command, UCoord, UPos};
@@ -103,6 +103,12 @@ pub fn non_empty_upos_g_command<const AXES: usize>(
     }
 }
 
+pub fn home<const AXES: usize>(i: &[u8]) -> IResult<&[u8], Command<AXES>> {
+    let (i, _) = g("28")(i)?;
+    let (i, f) = opt(preceded(multispace1, labeled_ucoord('F'))).parse(i)?;
+    Ok((i, Command::Home { f }))
+}
+
 pub fn dwell<const AXES: usize>(i: &[u8]) -> IResult<&[u8], Command<AXES>> {
     let (i, _) = g("4")(i)?;
     let (i, _) = multispace1(i)?;
@@ -137,7 +143,7 @@ pub fn command<const AXES: usize>(
             value(Command::Stop, m("0")),
             value(Command::EnableAllSteppers, m("17")),
             value(Command::DisableAllSteppers, m("18")),
-            value(Command::Home, g("28")),
+            home,
             value(Command::GetCurrentPosition, m("114")),
         ))
         .parse(i)
@@ -154,6 +160,29 @@ mod tests {
     const XYZF: [char; 4] = ['X', 'Y', 'Z', 'F'];
     const XZCF: [char; 4] = ['X', 'Z', 'C', 'F'];
 
+    fn round_trip<const N: usize>(cmd: Command<N>, axis_labels: [char; N]) {
+        let formatted = cmd.display(axis_labels).to_string();
+        let (rem, parsed) = command(axis_labels)(formatted.as_bytes()).unwrap();
+        assert_eq!(
+            rem,
+            b"",
+            "unparsed remainder: {:?}",
+            core::str::from_utf8(rem)
+        );
+        assert_eq!(parsed, cmd, "round-trip failed for: {formatted}");
+    }
+
+    macro_rules! test_parse {
+        ($axis_labels:expr, $input:expr, $expected:expr) => {
+            let axis_labels = $axis_labels;
+            let (rem, res) = command(axis_labels)($input).unwrap();
+            let expected = $expected;
+            assert_eq!(rem, b"");
+            assert_eq!(res, expected);
+            round_trip(expected, axis_labels);
+        };
+    }
+
     #[test]
     fn non_empty_upos_requires_non_empty_coords() {
         let result = non_empty_upos(XYZ).parse(b"");
@@ -162,48 +191,44 @@ mod tests {
 
     #[test]
     fn g0() {
-        let (remaining, res) = command(XYZ)(b"G0 X90.6 Y13.8 Z22.4").unwrap();
-        assert_eq!(remaining, b"");
-        assert_eq!(
-            res,
+        test_parse!(
+            XYZ,
+            b"G0 X90.6 Y13.8 Z22.4",
             Command::RapidMove(UPos([
                 Some(FixedU32::from_str("90.6").unwrap()),
                 Some(FixedU32::from_str("13.8").unwrap()),
                 Some(FixedU32::from_str("22.4").unwrap()),
             ]))
-        )
+        );
     }
 
     #[test]
     fn g0_incomplete() {
-        let (remaining, res) = command(XYZ)(b"G0 X90.6").unwrap();
-        assert_eq!(remaining, b"");
-        assert_eq!(
-            res,
+        test_parse!(
+            XYZ,
+            b"G0 X90.6",
             Command::RapidMove(UPos([
                 Some(FixedU32::from_str("90.6").unwrap()),
                 None,
                 None,
             ]))
-        )
+        );
     }
 
     #[test]
     fn g0_feedrate() {
-        let (remaining, res) = command(XYZF)(b"G0 F1500").unwrap();
-        assert_eq!(remaining, b"");
-        assert_eq!(
-            res,
+        test_parse!(
+            XYZF,
+            b"G0 F1500",
             Command::RapidMove(UPos([None, None, None, Some(FixedU32::from_num(1500))]))
         );
     }
 
     #[test]
     fn zc_axis() {
-        let (rem, res) = command(XZCF)(b"G0 Z40 C10 F40").unwrap();
-        assert_eq!(rem, b"");
-        assert_eq!(
-            res,
+        test_parse!(
+            XZCF,
+            b"G0 Z40 C10 F40",
             Command::RapidMove(UPos([
                 None,
                 Some(FixedU32::lit("40")),
@@ -215,118 +240,42 @@ mod tests {
 
     #[test]
     fn g4_secs() {
-        let (rem, res) = command(XYZF)(b"G4 S4").unwrap();
-        assert_eq!(rem, b"");
-        assert_eq!(res, Command::Dwell(Duration::from_secs(4)));
+        test_parse!(XYZF, b"G4 S4", Command::Dwell(Duration::from_secs(4)));
     }
 
     #[test]
     fn g4_millis() {
-        let (rem, res) = command(XYZF)(b"G4 P123").unwrap();
-        assert_eq!(rem, b"");
-        assert_eq!(res, Command::Dwell(Duration::from_millis(123)));
+        test_parse!(XYZF, b"G4 P123", Command::Dwell(Duration::from_millis(123)));
     }
 
     #[test]
     fn m0_stop() {
-        let (rem, res) = command(XYZF)(b"M0").unwrap();
-        assert_eq!(rem, b"");
-        assert_eq!(res, Command::Stop);
+        test_parse!(XYZF, b"M0", Command::Stop);
     }
 
     #[test]
     fn m17_enable_all_steppers() {
-        let (rem, res) = command(XYZF)(b"M17").unwrap();
-        assert_eq!(rem, b"");
-        assert_eq!(res, Command::EnableAllSteppers);
+        test_parse!(XYZF, b"M17", Command::EnableAllSteppers);
     }
 
     #[test]
     fn m18_disable_all_steppers() {
-        let (rem, res) = command(XYZF)(b"M18").unwrap();
-        assert_eq!(rem, b"");
-        assert_eq!(res, Command::DisableAllSteppers);
+        test_parse!(XYZF, b"M18", Command::DisableAllSteppers);
     }
 
     #[test]
     fn g28_home() {
-        let (rem, res) = command(XYZF)(b"G28").unwrap();
-        assert_eq!(rem, b"");
-        assert_eq!(res, Command::Home);
+        test_parse!(XYZF, b"G28", Command::Home { f: None });
     }
 
-    mod round_trip {
-        use super::*;
-
-        const XYZ: [char; 3] = ['X', 'Y', 'Z'];
-
-        fn round_trip(cmd: Command<3>) {
-            let formatted = cmd.display(XYZ).to_string();
-            let (rem, parsed) = command(XYZ)(formatted.as_bytes()).unwrap();
-            assert_eq!(
-                rem,
-                b"",
-                "unparsed remainder: {:?}",
-                core::str::from_utf8(rem)
-            );
-            assert_eq!(parsed, cmd, "round-trip failed for: {formatted}");
-        }
-
-        #[test]
-        fn stop() {
-            round_trip(Command::Stop);
-        }
-
-        #[test]
-        fn home() {
-            round_trip(Command::Home);
-        }
-
-        #[test]
-        fn enable_steppers() {
-            round_trip(Command::EnableAllSteppers);
-        }
-
-        #[test]
-        fn disable_steppers() {
-            round_trip(Command::DisableAllSteppers);
-        }
-
-        #[test]
-        fn get_position() {
-            round_trip(Command::GetCurrentPosition);
-        }
-
-        #[test]
-        fn dwell() {
-            round_trip(Command::Dwell(Duration::from_millis(500)));
-        }
-
-        #[test]
-        fn rapid_move_full() {
-            round_trip(Command::RapidMove(UPos([
-                Some(FixedU32::from_num(10)),
-                Some(FixedU32::from_num(20)),
-                Some(FixedU32::from_num(30)),
-            ])));
-        }
-
-        #[test]
-        fn rapid_move_partial() {
-            round_trip(Command::RapidMove(UPos([
-                Some(FixedU32::from_num(10)),
-                None,
-                Some(FixedU32::from_num(30)),
-            ])));
-        }
-
-        #[test]
-        fn linear_move() {
-            round_trip(Command::LinearMove(UPos([
-                Some(FixedU32::from_num(5)),
-                Some(FixedU32::from_num(15)),
-                None,
-            ])));
-        }
+    #[test]
+    fn home_with_feedrate() {
+        test_parse!(
+            XYZF,
+            b"G28 F40",
+            Command::Home {
+                f: Some(FixedU32::lit("40"))
+            }
+        );
     }
 }

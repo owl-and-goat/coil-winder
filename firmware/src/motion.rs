@@ -145,7 +145,7 @@ impl State {
                         *coord = UCoord::ZERO;
                     }
                 }
-                Command::Home => {
+                Command::Home { f: _, /* TODO */ } => {
                     let speeds =
                         [HOME_SPEED; 2].zip_with([self.axes[0], self.axes[1]], |speed, axis| {
                             match axis.unit {
