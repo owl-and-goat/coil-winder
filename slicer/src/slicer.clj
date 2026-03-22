@@ -18,6 +18,7 @@
 (defn enable-all-steppers [] [:M17])
 (defn disable-all-steppers [] [:M18])
 (defn get-current-position [] [:M114])
+(defn pause [] [:M226])
 
 (defn gcode-atom->str [elt]
   (cond
@@ -94,12 +95,12 @@
 ;;; Coil programs
 ;;;
 
-(defn scramble-wind [{:keys [turns]
+(defn scramble-wind [{:keys [turns pause-before-execute? feedrate]
                       bobbin-position :bobbin/position
                       bobbin-width :bobbin/width
                       wire-width :wire/width
-                      feedrate :feedrate
-                      :or {feedrate 20}}]
+                      :or {feedrate 20
+                           pause-before-execute? true}}]
   (let [;; step to beginning of bobbin
         step-to-beginning (rapid-move
                            {:Z bobbin-position :X 0}
@@ -123,6 +124,7 @@
         num-layers (math/ceil (/ turns turns-per-layer))]
     (concat
      [step-to-beginning]
+     (when pause-before-execute? [(pause)])
      (->> num-layers
           range
           (map-indexed mk-layer)
@@ -175,6 +177,7 @@
                        :bobbin/position 43.8
                        :bobbin/width 8.25
                        :wire/width 0.06335
+                       :feedrate 5
                        })
        gcode-program
        gcode->str
