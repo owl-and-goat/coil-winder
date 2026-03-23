@@ -1,5 +1,7 @@
 #+TITLE: Supported GCode commands
 
+We've been using https://reprap.org/wiki/G-code for inspiration.
+
 + *G0 X<x> Z<z> C<c> F<f>* - Rapid move
   All coordinates optional
 
