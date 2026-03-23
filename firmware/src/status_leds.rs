@@ -56,7 +56,7 @@ pub(crate) enum BlinkSpeed {
     Fast,
 }
 
-const BLINK_DELAY: Duration = Duration::from_millis(500);
+const BLINK_DELAY: Duration = Duration::from_millis(250);
 
 #[derive(Clone, Copy, defmt::Format, Default, PartialEq, Eq)]
 pub(crate) enum Behavior {
@@ -132,7 +132,7 @@ impl<'a> Runner<'a> {
     pub(crate) async fn run(mut self) -> ! {
         self.pins.values_mut().for_each(|p| p.set_low());
 
-        // "we can poll for the status every 500ms, it's *fine*, computers are fast!" - nausicaä
+        // "we can poll for the status every 250ms, it's *fine*, computers are fast!" - nausicaa
         loop {
             Timer::after(BLINK_DELAY).await;
             let status = self.control.status();
@@ -142,10 +142,10 @@ impl<'a> Runner<'a> {
                     Behavior::Off => self.pins.get_mut(color).set_low(),
                     Behavior::On => self.pins.get_mut(color).set_high(),
                     Behavior::Blink(speed) => {
-                        *self.blink.get_mut(color) = (self.blink.get(color) + 1) % 4;
+                        *self.blink.get_mut(color) = (self.blink.get(color) + 1) % 8;
                         let v = self.blink.get(color);
                         let on = match speed {
-                            BlinkSpeed::Slow => v & 2 != 0,
+                            BlinkSpeed::Slow => v & 4 != 0,
                             BlinkSpeed::Fast => v & 1 != 0,
                         };
                         self.pins.get_mut(color).set_level(Level::from(on));
