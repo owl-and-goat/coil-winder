@@ -8,6 +8,8 @@ use embassy_rp::{
     pio_programs::clock_divider::calculate_pio_clock_divider,
     Peri,
 };
+use embassy_sync::{blocking_mutex::raw::NoopRawMutex, channel};
+use embassy_time::Instant;
 use fixed::types::extra::U8;
 
 const PIO_TARGET_HZ: u32 =
@@ -188,6 +190,54 @@ pub struct HomeError {
     pub z_failed: bool,
 }
 
+#[derive(Debug, Clone, Copy)]
+pub enum Command {
+    Move {
+        steps: [i32; 3],
+        speeds: [StepsPerSecond; 3],
+    },
+    SetSleep(bool),
+    Home {
+        speeds: [(u32, StepsPerSecond); 2],
+    },
+}
+
+pub const BUFFER_SIZE: usize = 8;
+
+pub struct Channel {
+    command: channel::Channel<NoopRawMutex, Command, BUFFER_SIZE>,
+    home_result: channel::Channel<NoopRawMutex, Result<(), HomeError>, 1>,
+}
+
+impl Channel {
+    pub fn new() -> Self {
+        Self {
+            command: channel::Channel::new(),
+            home_result: channel::Channel::new(),
+        }
+    }
+}
+
+pub struct Control {
+    tx: channel::Sender<'static, NoopRawMutex, Command, BUFFER_SIZE>,
+    home_rx: channel::Receiver<'static, NoopRawMutex, Result<(), HomeError>, 1>,
+}
+
+impl Control {
+    pub async fn set_sleep(&self, sleep: bool) {
+        self.tx.send(Command::SetSleep(sleep)).await;
+    }
+
+    pub async fn home(&self, speeds: [(u32, StepsPerSecond); 2]) -> Result<(), HomeError> {
+        self.tx.send(Command::Home { speeds }).await;
+        self.home_rx.receive().await
+    }
+
+    pub async fn do_move(&self, steps: [i32; 3], speeds: [StepsPerSecond; 3]) {
+        self.tx.send(Command::Move { steps, speeds }).await;
+    }
+}
+
 pub struct Driver<'d, T: pio::Instance, const XSM: usize, const ZSM: usize, const CSM: usize> {
     pio: pio::Common<'d, T>,
     sleep_pin: gpio::Output<'d>,
@@ -195,6 +245,8 @@ pub struct Driver<'d, T: pio::Instance, const XSM: usize, const ZSM: usize, cons
     configured_program: Option<ConfiguredProgram>,
     programs: Programs<'d, T>,
     clock_divider: fixed::FixedU32<U8>,
+    rx: channel::Receiver<'static, NoopRawMutex, Command, BUFFER_SIZE>,
+    home_tx: channel::Sender<'static, NoopRawMutex, Result<(), HomeError>, 1>,
 }
 
 macro_rules! each_axis {
@@ -233,7 +285,8 @@ impl<'d, T: pio::Instance, const XSM: usize, const ZSM: usize, const CSM: usize>
         sleep_pin: Peri<'d, impl gpio::Pin>,
         axes: config::Axes<'d, T, XD, XS, XZL, XSM, ZD, ZS, ZZL, ZSM, CD, CS, CZL, CSM>,
         programs: Programs<'d, T>,
-    ) -> Self {
+        channel: &'static Channel,
+    ) -> (Control, Self) {
         let clock_divider = calculate_pio_clock_divider(PIO_TARGET_HZ);
 
         let axes = (
@@ -244,13 +297,34 @@ impl<'d, T: pio::Instance, const XSM: usize, const ZSM: usize, const CSM: usize>
 
         let sleep_pin = gpio::Output::new(sleep_pin, Level::Low);
 
-        Self {
-            pio,
-            sleep_pin,
-            axes,
-            configured_program: None,
-            clock_divider,
-            programs,
+        (
+            Control {
+                tx: channel.command.sender(),
+                home_rx: channel.home_result.receiver(),
+            },
+            Self {
+                pio,
+                sleep_pin,
+                axes,
+                configured_program: None,
+                clock_divider,
+                programs,
+                rx: channel.command.receiver(),
+                home_tx: channel.home_result.sender(),
+            },
+        )
+    }
+
+    pub async fn run(mut self) -> ! {
+        loop {
+            match self.rx.receive().await {
+                Command::Move { steps, speeds } => self.do_move(steps, speeds).await,
+                Command::SetSleep(sleep) => self.set_sleep(sleep).await,
+                Command::Home { speeds } => {
+                    let result = self.home(speeds).await;
+                    self.home_tx.send(result).await
+                }
+            }
         }
     }
 
@@ -271,15 +345,12 @@ impl<'d, T: pio::Instance, const XSM: usize, const ZSM: usize, const CSM: usize>
         self.configured_program = Some(which_program);
     }
 
-    pub async fn set_sleep(&mut self, sleep: bool) {
+    async fn set_sleep(&mut self, sleep: bool) {
         self.sleep_pin
             .set_level(if sleep { Level::Low } else { Level::High });
     }
 
-    pub async fn home(
-        &mut self,
-        speeds: impl IntoIterator<Item = (u32, StepsPerSecond)>,
-    ) -> Result<(), HomeError> {
+    async fn home(&mut self, speeds: [(u32, StepsPerSecond); 2]) -> Result<(), HomeError> {
         debug!("homing");
         self.configure_pio(ConfiguredProgram::Home);
 
@@ -331,14 +402,16 @@ impl<'d, T: pio::Instance, const XSM: usize, const ZSM: usize, const CSM: usize>
         }
     }
 
-    pub async fn do_move(&mut self, steps: [i32; 3], speeds: [StepsPerSecond; 3]) {
-        self.configure_pio(ConfiguredProgram::Steps);
+    async fn do_move(&mut self, steps: [i32; 3], speeds: [StepsPerSecond; 3]) {
+        info!("driver do_move (t={:tus})", Instant::now());
+        self.configure_pio(ConfiguredProgram::Move);
 
         each_axis!(self, |i, axis| {
             // corresponds to [pull block] instructions in steps.s
             axis.sm.tx().wait_push(steps[i].unsigned_abs()).await;
             axis.push_speed(speeds[i], Direction::from(steps[i])).await;
         });
+        info!("pushed speeds (t={:tus})", Instant::now());
 
         self.pio.apply_sm_batch(|batch| {
             each_axis!(self, |_, axis| {
@@ -347,14 +420,14 @@ impl<'d, T: pio::Instance, const XSM: usize, const ZSM: usize, const CSM: usize>
             });
         });
 
-        info!("waiting on irqs");
+        info!("waiting on irqs (t={:tus})", Instant::now());
         join3(
             self.axes.0.irq.wait(),
             self.axes.1.irq.wait(),
             self.axes.2.irq.wait(),
         )
         .await;
-        info!("done");
+        info!("got irqs (t={:tus})", Instant::now());
 
         self.pio.apply_sm_batch(|batch| {
             each_axis!(self, |_, axis| {
@@ -366,5 +439,6 @@ impl<'d, T: pio::Instance, const XSM: usize, const ZSM: usize, const CSM: usize>
                 batch.restart(&mut axis.sm);
             });
         });
+        info!("restarted pio (t={:tus})", Instant::now());
     }
 }

@@ -1,6 +1,6 @@
 use az::SaturatingCast;
 use defmt::{info, Display2Format, Format};
-use embassy_rp::{gpio, pio};
+use embassy_rp::gpio;
 use embassy_sync::{
     blocking_mutex::raw::{CriticalSectionRawMutex, RawMutex},
     channel,
@@ -110,9 +110,9 @@ impl State {
         }
     }
 
-    pub async fn run<const XSM: usize, const CSM: usize, const ZSM: usize>(
+    pub async fn run(
         mut self,
-        mut driver: driver::Driver<'static, impl pio::Instance, XSM, CSM, ZSM>,
+        driver: driver::Control,
         command_rx: channel::Receiver<
             'static,
             impl RawMutex,
@@ -231,7 +231,7 @@ impl State {
                         }
                     });
 
-                    let speed = if dist[2].is_zero() {
+                    let speeds = if dist[2].is_zero() {
                         if dist[1].is_zero() {
                             [
                                 self.feedrate
@@ -286,7 +286,7 @@ impl State {
                     };
 
                     info!("starting move (t={:tus})", ts());
-                    driver.do_move(steps, speed).await;
+                    driver.do_move(steps, speeds).await;
                 }
                 Command::GetCurrentPosition => {
                     let [x, z, c] = self.position;
