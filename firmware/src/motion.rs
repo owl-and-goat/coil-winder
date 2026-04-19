@@ -190,6 +190,11 @@ impl State {
                     }
                 }
                 Command::RapidMove(target_pos) | Command::LinearMove(target_pos) => {
+                    if !self.is_homed {
+                        self.status_leds.set_status(Status::BadCommand);
+                        continue;
+                    }
+
                     self.status_leds.set_status(Status::ExecutingCommand);
                     if let Some(feedrate) = target_pos.0[3 /* feedrate is the last axis */] {
                         self.feedrate = MillimetersPerSecond(feedrate);

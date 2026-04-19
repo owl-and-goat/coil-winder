@@ -156,6 +156,11 @@ fn status_behavior(status: Status) -> status_leds::PerColor<Behavior> {
             amber: Behavior::Blink(BlinkSpeed::Fast),
             ..Default::default()
         },
+        Status::BadCommand => status_leds::PerColor {
+            green: Behavior::On,
+            red: Behavior::Blink(BlinkSpeed::Slow),
+            ..Default::default()
+        },
     }
 }
 

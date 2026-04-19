@@ -100,6 +100,7 @@ pub(crate) enum Status {
     XHomingFailed,
     ZHomingFailed,
     BothHomingFailed,
+    BadCommand,
 }
 
 pub(crate) struct Runner<'a> {
