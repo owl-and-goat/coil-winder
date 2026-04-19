@@ -82,7 +82,7 @@ impl Server {
                             'read_command: loop {
                                 match gcode::parse_single_command(AXIS_LABELS, &buf[..n]) {
                                     Ok((remaining, command)) => {
-                                        info!("Got command: {}", &buf[..n]);
+                                        info!("Got command: {:a}", &buf[..n]);
                                         let start = usize::try_from(unsafe {
                                             remaining.as_ptr().offset_from(buf.as_ptr())
                                         })
@@ -95,7 +95,7 @@ impl Server {
                                     }
                                     Err(gcode::Error::Incomplete(_)) => { /* keep reading */ }
                                     Err(gcode::Error::ParseFailed) => {
-                                        warn!("parse failed");
+                                        warn!("parse failed: {:a}", &buf[..n]);
                                         if let Err(e) = socket.write_all(b"(parse failed)!\n").await
                                         {
                                             warn!("write error: {}", e);
