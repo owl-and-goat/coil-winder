@@ -1,10 +1,7 @@
 use az::SaturatingCast;
 use defmt::{info, Display2Format, Format};
-use embassy_rp::{gpio, pio};
-use embassy_sync::{
-    blocking_mutex::raw::{CriticalSectionRawMutex, RawMutex},
-    channel,
-};
+use embassy_rp::gpio;
+use embassy_sync::{blocking_mutex::raw::RawMutex, channel};
 use embassy_time::{Instant, Timer};
 use fixed::{types::extra::U10, FixedI32};
 use fixed_sqrt::FastSqrt;
@@ -14,7 +11,7 @@ use crate::{
     driver::{self, HomeError, StepsPerSecond},
     status_leds::{self, Status},
     util::ArrayZipWith,
-    CommandId, MotionStatusMsg, COMMAND_BUFFER_SIZE,
+    CommandId, COMMAND_BUFFER_SIZE,
 };
 
 pub type ICoord = FixedI32<U10>;
@@ -110,19 +107,13 @@ impl State {
         }
     }
 
-    pub async fn run<const XSM: usize, const CSM: usize, const ZSM: usize>(
+    pub async fn run(
         mut self,
-        mut driver: driver::Driver<'static, impl pio::Instance, XSM, CSM, ZSM>,
+        driver: driver::Control,
         command_rx: channel::Receiver<
             'static,
             impl RawMutex,
             (CommandId, Command<{ AXES + 1 } /* for F */>),
-            COMMAND_BUFFER_SIZE,
-        >,
-        status_tx: channel::Sender<
-            'static,
-            CriticalSectionRawMutex,
-            MotionStatusMsg,
             COMMAND_BUFFER_SIZE,
         >,
     ) -> ! {
@@ -138,11 +129,11 @@ impl State {
                 }
                 Command::EnableAllSteppers => {
                     info!("enabling steppers");
-                    driver.set_sleep(false).await
+                    driver.set_sleep(command_id, false).await
                 }
                 Command::DisableAllSteppers => {
                     info!("disabling steppers");
-                    driver.set_sleep(true).await;
+                    driver.set_sleep(command_id, true).await;
 
                     // If we disable the motors, we have to assume we don't know where we are
                     // anymore
@@ -170,7 +161,7 @@ impl State {
                                 }
                             }
                         });
-                    match driver.home(speeds).await {
+                    match driver.home(command_id, speeds).await {
                         Ok(()) => {
                             self.is_homed = true;
                             for coord in self.position.each_mut() {
@@ -185,7 +176,7 @@ impl State {
                             } else {
                                 Status::ZHomingFailed
                             });
-                            driver.set_sleep(true).await;
+                            driver.set_sleep(command_id, true).await;
                         }
                     }
                 }
@@ -231,7 +222,7 @@ impl State {
                         }
                     });
 
-                    let speed = if dist[2].is_zero() {
+                    let speeds = if dist[2].is_zero() {
                         if dist[1].is_zero() {
                             [
                                 self.feedrate
@@ -286,7 +277,7 @@ impl State {
                     };
 
                     info!("starting move (t={:tus})", ts());
-                    driver.do_move(steps, speed).await;
+                    driver.do_move(command_id, steps, speeds).await;
                 }
                 Command::GetCurrentPosition => {
                     let [x, z, c] = self.position;
@@ -306,10 +297,6 @@ impl State {
                 Command::Park(_) => {}
             }
             self.status_leds.set_status(Status::Ready);
-            info!("command {} done (t={:tus})", command_id, ts());
-            status_tx
-                .send(MotionStatusMsg::CommandFinished(command_id))
-                .await;
         }
     }
 }
