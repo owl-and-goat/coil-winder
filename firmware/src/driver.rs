@@ -8,9 +8,14 @@ use embassy_rp::{
     pio_programs::clock_divider::calculate_pio_clock_divider,
     Peri,
 };
-use embassy_sync::{blocking_mutex::raw::NoopRawMutex, channel};
+use embassy_sync::{
+    blocking_mutex::raw::{CriticalSectionRawMutex, NoopRawMutex},
+    channel,
+};
 use embassy_time::Instant;
 use fixed::types::extra::U8;
+
+use crate::{CommandId, MotionStatusMsg, COMMAND_BUFFER_SIZE};
 
 const PIO_TARGET_HZ: u32 =
     // 2 μs per cycle
@@ -53,15 +58,15 @@ impl StepsPerSecond {
 
 pub struct Programs<'a, T: pio::Instance> {
     home: pio::LoadedProgram<'a, T>,
-    steps: pio::LoadedProgram<'a, T>,
+    move_: pio::LoadedProgram<'a, T>,
 }
 
 impl<'a, T: pio::Instance> Programs<'a, T> {
     /// Load the program into the given pio
     pub fn new(common: &mut pio::Common<'a, T>) -> Self {
         let home = common.load_program(&::pio::pio_file!("src/home.s").program);
-        let steps = common.load_program(&::pio::pio_file!("src/steps.s").program);
-        Self { home, steps }
+        let move_ = common.load_program(&::pio::pio_file!("src/move.s").program);
+        Self { home, move_ }
     }
 }
 
@@ -76,7 +81,7 @@ pub mod config {
         pub step: Peri<'d, S>,
         /// Zero limit switch input pin
         pub zero_limit: Option<Peri<'d, ZL>>,
-        pub irq: pio::Irq<'d, T, SM>,
+        pub irq: Option<pio::Irq<'d, T, SM>>,
         pub sm: pio::StateMachine<'d, T, SM>,
     }
 
@@ -104,7 +109,7 @@ pub mod config {
 
 struct Axis<'d, T: pio::Instance, const SM: usize> {
     sm: pio::StateMachine<'d, T, SM>,
-    irq: pio::Irq<'d, T, SM>,
+    // irq: pio::Irq<'d, T, SM>,
     dir_pin: pio::Pin<'d, T>,
     step_pin: pio::Pin<'d, T>,
     zero_limit_pin: Option<pio::Pin<'d, T>>,
@@ -120,7 +125,7 @@ impl<'d, T: pio::Instance, const SM: usize> Axis<'d, T, SM> {
             step,
             zero_limit,
             dir,
-            irq,
+            irq: _,
         } = axis;
 
         let dir_pin = pio.make_pio_pin(dir);
@@ -140,7 +145,6 @@ impl<'d, T: pio::Instance, const SM: usize> Axis<'d, T, SM> {
 
         Self {
             sm,
-            irq,
             dir_pin,
             step_pin,
             zero_limit_pin,
@@ -181,7 +185,7 @@ impl<'d, T: pio::Instance, const SM: usize> Axis<'d, T, SM> {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum ConfiguredProgram {
     Home,
-    Steps,
+    Move,
 }
 
 #[derive(Clone, Copy)]
@@ -205,7 +209,9 @@ pub enum Command {
 pub const BUFFER_SIZE: usize = 8;
 
 pub struct Channel {
-    command: channel::Channel<NoopRawMutex, Command, BUFFER_SIZE>,
+    command: channel::Channel<NoopRawMutex, (CommandId, Command), BUFFER_SIZE>,
+    command_started: channel::Channel<NoopRawMutex, CommandStarted, COMMAND_BUFFER_SIZE>,
+    home_done: channel::Channel<NoopRawMutex, (), 1>,
     home_result: channel::Channel<NoopRawMutex, Result<(), HomeError>, 1>,
 }
 
@@ -213,28 +219,95 @@ impl Channel {
     pub fn new() -> Self {
         Self {
             command: channel::Channel::new(),
+            home_done: channel::Channel::new(),
             home_result: channel::Channel::new(),
+            command_started: channel::Channel::new(),
         }
     }
 }
 
 pub struct Control {
-    tx: channel::Sender<'static, NoopRawMutex, Command, BUFFER_SIZE>,
+    tx: channel::Sender<'static, NoopRawMutex, (CommandId, Command), BUFFER_SIZE>,
     home_rx: channel::Receiver<'static, NoopRawMutex, Result<(), HomeError>, 1>,
 }
 
 impl Control {
-    pub async fn set_sleep(&self, sleep: bool) {
-        self.tx.send(Command::SetSleep(sleep)).await;
+    pub async fn set_sleep(&self, command_id: CommandId, sleep: bool) {
+        self.tx.send((command_id, Command::SetSleep(sleep))).await;
     }
 
-    pub async fn home(&self, speeds: [(u32, StepsPerSecond); 2]) -> Result<(), HomeError> {
-        self.tx.send(Command::Home { speeds }).await;
+    pub async fn home(
+        &self,
+        command_id: CommandId,
+        speeds: [(u32, StepsPerSecond); 2],
+    ) -> Result<(), HomeError> {
+        self.tx.send((command_id, Command::Home { speeds })).await;
         self.home_rx.receive().await
     }
 
-    pub async fn do_move(&self, steps: [i32; 3], speeds: [StepsPerSecond; 3]) {
-        self.tx.send(Command::Move { steps, speeds }).await;
+    pub async fn do_move(
+        &self,
+        command_id: CommandId,
+        steps: [i32; 3],
+        speeds: [StepsPerSecond; 3],
+    ) {
+        self.tx
+            .send((command_id, Command::Move { steps, speeds }))
+            .await;
+    }
+}
+
+pub enum CommandStarted {
+    SetSleep(CommandId),
+    Home(CommandId),
+    Move(CommandId),
+}
+
+pub struct CommandCompletion<
+    'd,
+    T: pio::Instance,
+    const XSM: usize,
+    const ZSM: usize,
+    const CSM: usize,
+> {
+    command_rx: channel::Receiver<'static, NoopRawMutex, CommandStarted, COMMAND_BUFFER_SIZE>,
+    home_done_tx: channel::Sender<'static, NoopRawMutex, (), 1>,
+    irqs: (
+        pio::Irq<'d, T, XSM>,
+        pio::Irq<'d, T, ZSM>,
+        pio::Irq<'d, T, CSM>,
+    ),
+}
+
+impl<'d, T: pio::Instance, const XSM: usize, const ZSM: usize, const CSM: usize>
+    CommandCompletion<'d, T, XSM, ZSM, CSM>
+{
+    pub async fn run(
+        mut self,
+        status_tx: channel::Sender<
+            'static,
+            CriticalSectionRawMutex,
+            MotionStatusMsg,
+            COMMAND_BUFFER_SIZE,
+        >,
+    ) -> ! {
+        loop {
+            let command_id = match self.command_rx.receive().await {
+                CommandStarted::SetSleep(command_id) => command_id,
+                CommandStarted::Home(command_id) => {
+                    join(self.irqs.0.wait(), self.irqs.1.wait()).await;
+                    self.home_done_tx.send(()).await;
+                    command_id
+                }
+                CommandStarted::Move(command_id) => {
+                    join3(self.irqs.0.wait(), self.irqs.1.wait(), self.irqs.2.wait()).await;
+                    command_id
+                }
+            };
+            status_tx
+                .send(MotionStatusMsg::CommandFinished(command_id))
+                .await;
+        }
     }
 }
 
@@ -245,8 +318,10 @@ pub struct Driver<'d, T: pio::Instance, const XSM: usize, const ZSM: usize, cons
     configured_program: Option<ConfiguredProgram>,
     programs: Programs<'d, T>,
     clock_divider: fixed::FixedU32<U8>,
-    rx: channel::Receiver<'static, NoopRawMutex, Command, BUFFER_SIZE>,
+    rx: channel::Receiver<'static, NoopRawMutex, (CommandId, Command), BUFFER_SIZE>,
     home_tx: channel::Sender<'static, NoopRawMutex, Result<(), HomeError>, 1>,
+    home_done_rx: channel::Receiver<'static, NoopRawMutex, (), 1>,
+    command_started_tx: channel::Sender<'static, NoopRawMutex, CommandStarted, COMMAND_BUFFER_SIZE>,
 }
 
 macro_rules! each_axis {
@@ -283,11 +358,17 @@ impl<'d, T: pio::Instance, const XSM: usize, const ZSM: usize, const CSM: usize>
     >(
         mut pio: pio::Common<'d, T>,
         sleep_pin: Peri<'d, impl gpio::Pin>,
-        axes: config::Axes<'d, T, XD, XS, XZL, XSM, ZD, ZS, ZZL, ZSM, CD, CS, CZL, CSM>,
+        mut axes: config::Axes<'d, T, XD, XS, XZL, XSM, ZD, ZS, ZZL, ZSM, CD, CS, CZL, CSM>,
         programs: Programs<'d, T>,
         channel: &'static Channel,
-    ) -> (Control, Self) {
+    ) -> (CommandCompletion<'d, T, XSM, ZSM, CSM>, Control, Self) {
         let clock_divider = calculate_pio_clock_divider(PIO_TARGET_HZ);
+
+        let irqs = (
+            axes.x_axis.irq.take().expect("X Axis IRQ must be set"),
+            axes.z_axis.irq.take().expect("Z Axis IRQ must be set"),
+            axes.c_axis.irq.take().expect("C Axis IRQ must be set"),
+        );
 
         let axes = (
             Axis::new(&mut pio, axes.x_axis),
@@ -298,6 +379,11 @@ impl<'d, T: pio::Instance, const XSM: usize, const ZSM: usize, const CSM: usize>
         let sleep_pin = gpio::Output::new(sleep_pin, Level::Low);
 
         (
+            CommandCompletion {
+                command_rx: channel.command_started.receiver(),
+                home_done_tx: channel.home_done.sender(),
+                irqs,
+            },
             Control {
                 tx: channel.command.sender(),
                 home_rx: channel.home_result.receiver(),
@@ -311,17 +397,20 @@ impl<'d, T: pio::Instance, const XSM: usize, const ZSM: usize, const CSM: usize>
                 programs,
                 rx: channel.command.receiver(),
                 home_tx: channel.home_result.sender(),
+                home_done_rx: channel.home_done.receiver(),
+                command_started_tx: channel.command_started.sender(),
             },
         )
     }
 
     pub async fn run(mut self) -> ! {
         loop {
-            match self.rx.receive().await {
-                Command::Move { steps, speeds } => self.do_move(steps, speeds).await,
-                Command::SetSleep(sleep) => self.set_sleep(sleep).await,
+            let (command_id, command) = self.rx.receive().await;
+            match command {
+                Command::Move { steps, speeds } => self.do_move(command_id, steps, speeds).await,
+                Command::SetSleep(sleep) => self.set_sleep(command_id, sleep).await,
                 Command::Home { speeds } => {
-                    let result = self.home(speeds).await;
+                    let result = self.home(command_id, speeds).await;
                     self.home_tx.send(result).await
                 }
             }
@@ -335,7 +424,7 @@ impl<'d, T: pio::Instance, const XSM: usize, const ZSM: usize, const CSM: usize>
 
         let program = match which_program {
             ConfiguredProgram::Home => &self.programs.home,
-            ConfiguredProgram::Steps => &self.programs.steps,
+            ConfiguredProgram::Move => &self.programs.move_,
         };
 
         each_axis!(self, |_i, axis| {
@@ -345,12 +434,19 @@ impl<'d, T: pio::Instance, const XSM: usize, const ZSM: usize, const CSM: usize>
         self.configured_program = Some(which_program);
     }
 
-    async fn set_sleep(&mut self, sleep: bool) {
+    async fn set_sleep(&mut self, command_id: CommandId, sleep: bool) {
         self.sleep_pin
             .set_level(if sleep { Level::Low } else { Level::High });
+        self.command_started_tx
+            .send(CommandStarted::SetSleep(command_id))
+            .await
     }
 
-    async fn home(&mut self, speeds: [(u32, StepsPerSecond); 2]) -> Result<(), HomeError> {
+    async fn home(
+        &mut self,
+        command_id: CommandId,
+        speeds: [(u32, StepsPerSecond); 2],
+    ) -> Result<(), HomeError> {
         debug!("homing");
         self.configure_pio(ConfiguredProgram::Home);
 
@@ -376,7 +472,10 @@ impl<'d, T: pio::Instance, const XSM: usize, const ZSM: usize, const CSM: usize>
             });
         });
 
-        join(self.axes.0.irq.wait(), self.axes.1.irq.wait()).await;
+        self.command_started_tx
+            .send(CommandStarted::Home(command_id))
+            .await;
+        self.home_done_rx.receive().await;
         debug!("finished home routine");
 
         let (x_left, z_left) = (
@@ -402,7 +501,12 @@ impl<'d, T: pio::Instance, const XSM: usize, const ZSM: usize, const CSM: usize>
         }
     }
 
-    async fn do_move(&mut self, steps: [i32; 3], speeds: [StepsPerSecond; 3]) {
+    async fn do_move(
+        &mut self,
+        command_id: CommandId,
+        steps: [i32; 3],
+        speeds: [StepsPerSecond; 3],
+    ) {
         info!("driver do_move (t={:tus})", Instant::now());
         self.configure_pio(ConfiguredProgram::Move);
 
@@ -413,32 +517,8 @@ impl<'d, T: pio::Instance, const XSM: usize, const ZSM: usize, const CSM: usize>
         });
         info!("pushed speeds (t={:tus})", Instant::now());
 
-        self.pio.apply_sm_batch(|batch| {
-            each_axis!(self, |_, axis| {
-                batch.restart(&mut axis.sm);
-                batch.set_enable(&mut axis.sm, true);
-            });
-        });
-
-        info!("waiting on irqs (t={:tus})", Instant::now());
-        join3(
-            self.axes.0.irq.wait(),
-            self.axes.1.irq.wait(),
-            self.axes.2.irq.wait(),
-        )
-        .await;
-        info!("got irqs (t={:tus})", Instant::now());
-
-        self.pio.apply_sm_batch(|batch| {
-            each_axis!(self, |_, axis| {
-                batch.set_enable(&mut axis.sm, false);
-            });
-        });
-        self.pio.apply_sm_batch(|batch| {
-            each_axis!(self, |_, axis| {
-                batch.restart(&mut axis.sm);
-            });
-        });
-        info!("restarted pio (t={:tus})", Instant::now());
+        self.command_started_tx
+            .send(CommandStarted::Move(command_id))
+            .await;
     }
 }

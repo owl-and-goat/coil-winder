@@ -85,6 +85,18 @@ async fn motion_task(
         (CommandId, gcode::Command<AXES>),
         COMMAND_BUFFER_SIZE,
     >,
+) -> ! {
+    motion.run(driver, command_rx).await;
+}
+
+#[embassy_executor::task]
+async fn driver_task(driver: driver::Driver<'static, PIO0, 1, 2, 3>) -> ! {
+    driver.run().await
+}
+
+#[embassy_executor::task]
+async fn command_completion_task(
+    command_completion: driver::CommandCompletion<'static, PIO0, 1, 2, 3>,
     status_tx: channel::Sender<
         'static,
         CriticalSectionRawMutex,
@@ -92,12 +104,7 @@ async fn motion_task(
         COMMAND_BUFFER_SIZE,
     >,
 ) -> ! {
-    motion.run(driver, command_rx, status_tx).await;
-}
-
-#[embassy_executor::task]
-async fn driver_task(driver: driver::Driver<'static, PIO0, 1, 2, 3>) -> ! {
-    driver.run().await
+    command_completion.run(status_tx).await
 }
 
 #[embassy_executor::task]
@@ -329,7 +336,7 @@ fn main() -> ! {
             executor1.run(|spawner| {
                 let prgs = driver::Programs::new(&mut pio.common);
                 let driver_channel = make_static!(driver::Channel, driver::Channel::new());
-                let (driver_control, driver) = driver::Driver::new(
+                let (command_completion, driver_control, driver) = driver::Driver::new(
                     pio.common,
                     /* sleep_pin = */ p.PIN_15,
                     driver::config::Axes {
@@ -337,21 +344,21 @@ fn main() -> ! {
                             step: p.PIN_4,
                             dir: p.PIN_5,
                             zero_limit: Some(p.PIN_2),
-                            irq: pio.irq1,
+                            irq: Some(pio.irq1),
                             sm: pio.sm1,
                         },
                         z_axis: driver::config::Axis {
                             step: p.PIN_20,
                             dir: p.PIN_21,
                             zero_limit: Some(p.PIN_3),
-                            irq: pio.irq2,
+                            irq: Some(pio.irq2),
                             sm: pio.sm2,
                         },
                         c_axis: driver::config::Axis {
                             step: p.PIN_16,
                             dir: p.PIN_17,
                             zero_limit: None::</* can put anything here, lol */ Peri<PIN_0>>,
-                            irq: pio.irq3,
+                            irq: Some(pio.irq3),
                             sm: pio.sm3,
                         },
                     },
@@ -360,6 +367,7 @@ fn main() -> ! {
                 );
 
                 spawner.must_spawn(driver_task(driver));
+                spawner.must_spawn(command_completion_task(command_completion, status_tx));
 
                 spawner.must_spawn(motion_task(
                     motion::State::new(
@@ -394,7 +402,6 @@ fn main() -> ! {
                     ),
                     driver_control,
                     command_rx,
-                    status_tx,
                 ))
             })
         },
