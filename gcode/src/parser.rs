@@ -4,14 +4,14 @@ use core::time::Duration;
 
 use heapless::Vec;
 use nom::{
-    AsChar, IResult, Parser,
     branch::alt,
-    bytes::{complete::take_while1, streaming::tag},
-    character::{complete::multispace1, streaming::char},
+    bytes::complete::{tag, take_while1},
+    character::complete::{char, multispace1},
     combinator::{map, map_res, opt, value},
     error::ErrorKind,
     number::complete::recognize_float,
     sequence::preceded,
+    AsChar, IResult, Parser,
 };
 
 use crate::ast::{Command, UCoord, UPos};
@@ -273,6 +273,37 @@ mod tests {
     #[test]
     fn g28_home() {
         test_parse!(XYZF, b"G28", Command::Home { f: None });
+    }
+
+    #[test]
+    fn g28_home_trailing_newline() {
+        // Tests to make sure we're not accidentally using the streaming parsers
+        let (rem, res) = command(XYZF)(b"G28\n").unwrap();
+        assert_eq!(res, Command::Home { f: None });
+        assert_eq!(rem, b"\n");
+    }
+
+    #[test]
+    fn g28_home_with_feedrate() {
+        test_parse!(
+            XYZF,
+            b"G28 F123",
+            Command::Home {
+                f: Some("123".parse().unwrap())
+            }
+        );
+    }
+
+    #[test]
+    fn g28_home_with_feedrate_trailing_newline() {
+        let (rem, res) = command(XYZF)(b"G28 F123\n").unwrap();
+        assert_eq!(
+            res,
+            Command::Home {
+                f: Some("123".parse().unwrap())
+            }
+        );
+        assert_eq!(rem, b"\n");
     }
 
     #[test]
