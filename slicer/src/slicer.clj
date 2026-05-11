@@ -13,7 +13,9 @@
   [:G0 (assoc coords feedrate-coord feedrate)])
 (defn linear-move [coords & {:keys [feedrate]}]
   [:G0 (assoc coords feedrate-coord feedrate)])
-(defn home [] [:G28])
+(defn home [& {:keys [feedrate]}]
+  (into [:G28]
+        (when feedrate [{feedrate-coord feedrate}])))
 (defn stop [] [:M0])
 (defn enable-all-steppers [] [:M17])
 (defn disable-all-steppers [] [:M18])
@@ -170,15 +172,13 @@
     (scramble-wind {:turns 5000
                     :bobbin/position 43.5
                     :bobbin/width 8.25
-                    :wire/width 0.06335
-                    }))
+                    :wire/width 0.06335}))
 
   (->> (scramble-wind {:turns 5000
                        :bobbin/position 42.35
                        :bobbin/width 8.25
                        :wire/width 0.06335
-                       :feedrate 5
-                       })
+                       :feedrate 5})
        gcode-program
        gcode->str
        (spit (str (fs/path programs-dir "pickup-1.gcode"))))
@@ -191,7 +191,10 @@
   (oneshot! (get-current-position))
 
   (oneshot! (enable-all-steppers))
+  (oneshot! (home :feedrate 30))
+  (oneshot! (rapid-move {:X 50 :Z 50} :feedrate 30))
   (oneshot! (disable-all-steppers))
-  (oneshot! (home))
-  (oneshot! (disable-all-steppers))
-  (run! [(enable-all-steppers) (home)]))
+  (run! [(enable-all-steppers)
+         (home :feedrate 10)
+         (rapid-move {:X 50 :Z 50} :feedrate 30)
+         (disable-all-steppers)]))

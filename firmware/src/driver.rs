@@ -300,7 +300,23 @@ impl<'d, T: pio::Instance, const XSM: usize, const ZSM: usize, const CSM: usize>
                     command_id
                 }
                 CommandStarted::Move(command_id) => {
-                    join3(self.irqs.0.wait(), self.irqs.1.wait(), self.irqs.2.wait()).await;
+                    debug!("starting move ovah heah");
+                    join3(
+                        async {
+                            self.irqs.0.wait().await;
+                            debug!("irq 0");
+                        },
+                        async {
+                            self.irqs.1.wait().await;
+                            debug!("irq 1");
+                        },
+                        async {
+                            self.irqs.2.wait().await;
+                            debug!("irq 2");
+                        },
+                    )
+                    .await;
+                    debug!("finishing move ovah heah");
                     command_id
                 }
             };
