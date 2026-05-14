@@ -129,6 +129,7 @@ impl State {
             | gcode::Command::LinearMove(_)
             | gcode::Command::Home { .. }
             | gcode::Command::Stop
+            | gcode::Command::EmergencyStop
             | gcode::Command::GetCurrentPosition => false,
 
             gcode::Command::Dwell(_)
@@ -166,7 +167,7 @@ impl State {
             self.last_command_sent = Some(command_id);
 
             match command {
-                Command::Stop => continue,
+                Command::Stop | Command::EmergencyStop => continue,
                 Command::Dwell(duration) => {
                     Timer::after_millis(duration.as_millis() as _).await;
                 }

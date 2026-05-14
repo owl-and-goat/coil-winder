@@ -26,6 +26,8 @@ We've been using https://reprap.org/wiki/G-code for inspiration.
 
 + *M18* - Disable all steppers
 
++ *M112* - Emergency stop
+
 + *M114* - Get current position
 
   Prints current position to debug console
