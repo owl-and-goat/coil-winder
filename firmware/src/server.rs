@@ -131,7 +131,9 @@ impl Server {
                             warn!("write error: {}", e);
                         }
 
-                        if command == gcode::Command::Stop {
+                        // TODO: handle gcode::Command::Stop
+
+                        if command == gcode::Command::EmergencyStop {
                             resp_buf.fill(0);
                             writeln!(&mut resp_buf[..], "(done {})", command_id.0).unwrap();
 

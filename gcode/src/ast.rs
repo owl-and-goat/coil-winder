@@ -1,7 +1,7 @@
 use core::fmt::{self, Display};
 use core::time::Duration;
 
-use fixed::{FixedU32, types::extra::U10};
+use fixed::{types::extra::U10, FixedU32};
 
 // TODO(aspen): Consider making this signed after all, in case we want to rotate the spindle
 // backwards(?)
@@ -43,6 +43,8 @@ pub enum Command<const AXES: usize> {
     EnableAllSteppers,
     /// M18
     DisableAllSteppers,
+    /// M112
+    EmergencyStop,
     /// M114
     GetCurrentPosition,
     /// M226
@@ -85,6 +87,7 @@ impl<const AXES: usize> Display for DisplayCommand<'_, AXES> {
             Command::Stop => write!(f, "M0"),
             Command::EnableAllSteppers => write!(f, "M17"),
             Command::DisableAllSteppers => write!(f, "M18"),
+            Command::EmergencyStop => write!(f, "M112"),
             Command::GetCurrentPosition => write!(f, "M114"),
             Command::Pause => write!(f, "M226"),
         }
