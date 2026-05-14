@@ -5,22 +5,22 @@
 use core::{net::Ipv4Addr, ptr::addr_of_mut};
 
 use cyw43::JoinOptions;
-use cyw43_pio::{PioSpi, DEFAULT_CLOCK_DIVIDER};
+use cyw43_pio::{DEFAULT_CLOCK_DIVIDER, PioSpi};
 use defmt::*;
 use embassy_executor::{Executor, Spawner};
 use embassy_futures::select::Either;
 use embassy_net::StackResources;
 use embassy_rp::{
-    bind_interrupts,
+    Peri, bind_interrupts,
     clocks::RoscRng,
     gpio::{Input, Level, Output, Pull},
     multicore::Stack,
     peripherals::{DMA_CH0, PIN_0, PIO0},
     pio::{InterruptHandler, Pio},
-    Peri,
+    watchdog::Watchdog,
 };
 use embassy_sync::{blocking_mutex::raw::CriticalSectionRawMutex, channel, signal};
-use embassy_time::{with_timeout, Duration};
+use embassy_time::{Duration, with_timeout};
 use static_cell::StaticCell;
 
 use crate::{
@@ -196,6 +196,7 @@ async fn core0(
         MotionStatusMsg,
         COMMAND_BUFFER_SIZE,
     >,
+    watchdog: Watchdog,
 ) -> ! {
     let status_leds = status_leds_runner.control();
     spawner.must_spawn(status_leds_task(status_leds_runner));
@@ -272,6 +273,7 @@ async fn core0(
         command_tx,
         status_rx,
         command_id_gen: 0,
+        watchdog,
     }
     .run()
     .await
@@ -333,6 +335,8 @@ fn main() -> ! {
     static LAST_COMPLETED: StaticCell<signal::Signal<CriticalSectionRawMutex, CommandId>> =
         StaticCell::new();
     let last_completed: &'static _ = LAST_COMPLETED.init(signal::Signal::new());
+
+    let watchdog = Watchdog::new(p.WATCHDOG);
 
     embassy_rp::multicore::spawn_core1(
         p.CORE1,
@@ -420,6 +424,14 @@ fn main() -> ! {
 
     let executor0 = EXECUTOR0.init(Executor::new());
     executor0.run(|spawner| {
-        spawner.must_spawn(core0(pwr, spi, spawner, status_leds, command_tx, status_rx))
+        spawner.must_spawn(core0(
+            pwr,
+            spi,
+            spawner,
+            status_leds,
+            command_tx,
+            status_rx,
+            watchdog,
+        ))
     })
 }

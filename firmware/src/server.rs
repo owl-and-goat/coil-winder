@@ -1,11 +1,12 @@
 use defmt::{debug, info, warn};
-use embassy_futures::select::{select, Either};
+use embassy_futures::select::{Either, select};
 use embassy_net::tcp::TcpSocket;
+use embassy_rp::watchdog::Watchdog;
 use embassy_sync::{blocking_mutex::raw::CriticalSectionRawMutex, channel};
 use embassy_time::Duration;
 use embedded_io_async::Write;
 
-use crate::{CommandId, MotionStatusMsg, AXES, AXIS_LABELS, COMMAND_BUFFER_SIZE, PORT};
+use crate::{AXES, AXIS_LABELS, COMMAND_BUFFER_SIZE, CommandId, MotionStatusMsg, PORT};
 
 pub struct Server {
     pub stack: embassy_net::Stack<'static>,
@@ -18,6 +19,7 @@ pub struct Server {
     pub status_rx:
         channel::Receiver<'static, CriticalSectionRawMutex, MotionStatusMsg, COMMAND_BUFFER_SIZE>,
     pub command_id_gen: u32,
+    pub watchdog: Watchdog,
 }
 
 impl Server {
@@ -120,30 +122,33 @@ impl Server {
                             }
                         };
 
-                        match command {
-                            gcode::Command::Stop => {
-                                // TODO(aspen): Also cancel the current command
-                                self.command_tx.clear();
+                        let command_id = self.gen_command_id();
+                        let mut resp_buf = [0u8; 64];
+                        use embedded_io::Write;
+                        writeln!(&mut resp_buf[..], "(ack {})", command_id.0).unwrap();
 
-                                if let Err(e) = socket.write_all(b"(ack)\n").await {
-                                    warn!("write error: {}", e);
-                                    continue 'accept;
-                                }
-                            }
-                            command => {
-                                let command_id = self.gen_command_id();
-                                self.command_tx.send((command_id, command)).await;
+                        if let Err(e) = socket.write_all(&resp_buf).await {
+                            warn!("write error: {}", e);
+                        }
 
-                                {
-                                    let mut resp_buf = [0u8; 64];
-                                    use embedded_io::Write;
-                                    resp_buf.fill(0);
-                                    writeln!(&mut resp_buf[..], "(ack {})", command_id.0).unwrap();
-                                    if let Err(e) = socket.write_all(&resp_buf).await {
-                                        warn!("write error: {}", e);
-                                    }
-                                }
+                        if command == gcode::Command::Stop {
+                            resp_buf.fill(0);
+                            writeln!(&mut resp_buf[..], "(done {})", command_id.0).unwrap();
+
+                            if let Err(e) = socket.write_all(&resp_buf).await {
+                                warn!("write error: {}", e);
                             }
+
+                            if let Err(e) = socket.flush().await {
+                                warn!("flush error: {}", e);
+                            }
+
+                            socket.close();
+
+                            // XXX(nausicaa): this sure as hell stops it lol
+                            self.watchdog.trigger_reset();
+                        } else {
+                            self.command_tx.send((command_id, command)).await;
                         }
                     }
                 }
