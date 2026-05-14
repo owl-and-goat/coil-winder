@@ -132,7 +132,7 @@ impl Server {
                         }
 
                         match command {
-                            gcode::Command::EmergencyStop => {
+                            gcode::Command::ForceStop => {
                                 resp_buf.fill(0);
                                 writeln!(&mut resp_buf[..], "(done {})", command_id.0).unwrap();
 

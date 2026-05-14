@@ -169,7 +169,7 @@ pub fn command<const AXES: usize>(
                 value(Command::EnableAllSteppers, m("17")),
                 value(Command::DisableAllSteppers, m("18")),
                 home,
-                value(Command::EmergencyStop, m("112")),
+                value(Command::ForceStop, m("112")),
                 value(Command::GetCurrentPosition, m("114")),
                 value(Command::Pause, m("226")),
             )),
@@ -403,7 +403,7 @@ mod tests {
     }
 
     #[test]
-    fn m112_emergency_stop() {
-        test_parse!(XYZF, b"M112", Command::EmergencyStop);
+    fn m112_force_stop() {
+        test_parse!(XYZF, b"M112", Command::ForceStop);
     }
 }
