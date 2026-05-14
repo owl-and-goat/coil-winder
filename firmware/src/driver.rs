@@ -1,21 +1,21 @@
 //! Ref: https://www.allegromicro.com/-/media/files/datasheets/a4988-datasheet.pdf
 
-use defmt::{debug, info, Format};
-use embassy_futures::join::{join, join3};
+use defmt::{Format, debug, info};
+use embassy_futures::join::join;
 use embassy_rp::{
+    Peri,
     gpio::{self, Level, Pull},
     pio::{self, PioPin},
     pio_programs::clock_divider::calculate_pio_clock_divider,
-    Peri,
 };
 use embassy_sync::{
     blocking_mutex::raw::{CriticalSectionRawMutex, NoopRawMutex},
-    channel,
+    channel, signal,
 };
 use embassy_time::Instant;
 use fixed::types::extra::U8;
 
-use crate::{CommandId, MotionStatusMsg, COMMAND_BUFFER_SIZE};
+use crate::{COMMAND_BUFFER_SIZE, CommandId, MotionStatusMsg};
 
 const PIO_TARGET_HZ: u32 =
     // 2 μs per cycle
@@ -290,6 +290,7 @@ impl<'d, T: pio::Instance, const XSM: usize, const ZSM: usize, const CSM: usize>
             MotionStatusMsg,
             COMMAND_BUFFER_SIZE,
         >,
+        last_completed: &'static signal::Signal<CriticalSectionRawMutex, CommandId>,
     ) -> ! {
         loop {
             let command_id = match self.command_rx.receive().await {
@@ -300,29 +301,22 @@ impl<'d, T: pio::Instance, const XSM: usize, const ZSM: usize, const CSM: usize>
                     command_id
                 }
                 CommandStarted::Move(command_id) => {
-                    debug!("starting move ovah heah");
-                    join3(
-                        async {
-                            self.irqs.0.wait().await;
-                            debug!("irq 0");
-                        },
-                        async {
-                            self.irqs.1.wait().await;
-                            debug!("irq 1");
-                        },
-                        async {
-                            self.irqs.2.wait().await;
-                            debug!("irq 2");
-                        },
-                    )
-                    .await;
-                    debug!("finishing move ovah heah");
+                    // FIXME: IRQ 2 never (visibly) fires, as the PIO block only
+                    // has two external IRQ lines. however, each of these tasks
+                    // /should/ in theory take the same amount of time, so
+                    // waiting on two axes is good enough for testing.
+                    //
+                    // TODO: merge homing and ordinary movement programs and,
+                    // instead of waiting on an IRQ, wait on the RX FIFO.
+                    join(self.irqs.0.wait(), self.irqs.1.wait()).await;
+                    debug!("finished moving");
                     command_id
                 }
             };
             status_tx
                 .send(MotionStatusMsg::CommandFinished(command_id))
                 .await;
+            last_completed.signal(command_id);
         }
     }
 }
@@ -446,6 +440,18 @@ impl<'d, T: pio::Instance, const XSM: usize, const ZSM: usize, const CSM: usize>
         each_axis!(self, |_i, axis| {
             axis.configure(self.clock_divider, program);
         });
+
+        // XXX: we have to do this somewhere when reconfiguring for a move, and
+        // this is definitely not the place but /does/ mean we don't redo this
+        // every single time.
+        if which_program == ConfiguredProgram::Move {
+            self.pio.apply_sm_batch(|batch| {
+                each_axis!(self, |_, axis| {
+                    batch.restart(&mut axis.sm);
+                    batch.set_enable(&mut axis.sm, true);
+                });
+            });
+        }
 
         self.configured_program = Some(which_program);
     }
