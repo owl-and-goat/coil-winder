@@ -19,7 +19,7 @@ use embassy_rp::{
     pio::{InterruptHandler, Pio},
     Peri,
 };
-use embassy_sync::{blocking_mutex::raw::CriticalSectionRawMutex, channel};
+use embassy_sync::{blocking_mutex::raw::CriticalSectionRawMutex, channel, signal};
 use embassy_time::{with_timeout, Duration};
 use static_cell::StaticCell;
 
@@ -85,8 +85,9 @@ async fn motion_task(
         (CommandId, gcode::Command<AXES>),
         COMMAND_BUFFER_SIZE,
     >,
+    last_completed: &'static signal::Signal<CriticalSectionRawMutex, CommandId>,
 ) -> ! {
-    motion.run(driver, command_rx).await;
+    motion.run(driver, command_rx, last_completed).await;
 }
 
 #[embassy_executor::task]
@@ -103,8 +104,9 @@ async fn command_completion_task(
         MotionStatusMsg,
         COMMAND_BUFFER_SIZE,
     >,
+    last_completed: &'static signal::Signal<CriticalSectionRawMutex, CommandId>,
 ) -> ! {
-    command_completion.run(status_tx).await
+    command_completion.run(status_tx, last_completed).await
 }
 
 #[embassy_executor::task]
@@ -328,6 +330,10 @@ fn main() -> ! {
     let status_tx = status_channel.sender();
     let status_rx = status_channel.receiver();
 
+    static LAST_COMPLETED: StaticCell<signal::Signal<CriticalSectionRawMutex, CommandId>> =
+        StaticCell::new();
+    let last_completed: &'static _ = LAST_COMPLETED.init(signal::Signal::new());
+
     embassy_rp::multicore::spawn_core1(
         p.CORE1,
         unsafe { &mut *addr_of_mut!(CORE1_STACK) },
@@ -367,7 +373,11 @@ fn main() -> ! {
                 );
 
                 spawner.must_spawn(driver_task(driver));
-                spawner.must_spawn(command_completion_task(command_completion, status_tx));
+                spawner.must_spawn(command_completion_task(
+                    command_completion,
+                    status_tx,
+                    last_completed,
+                ));
 
                 spawner.must_spawn(motion_task(
                     motion::State::new(
@@ -402,6 +412,7 @@ fn main() -> ! {
                     ),
                     driver_control,
                     command_rx,
+                    last_completed,
                 ))
             })
         },

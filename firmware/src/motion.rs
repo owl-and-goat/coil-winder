@@ -1,17 +1,20 @@
 use az::SaturatingCast;
-use defmt::{info, Display2Format, Format};
+use defmt::{Display2Format, Format, info};
 use embassy_rp::gpio;
-use embassy_sync::{blocking_mutex::raw::RawMutex, channel};
+use embassy_sync::{
+    blocking_mutex::raw::{CriticalSectionRawMutex, RawMutex},
+    channel, signal,
+};
 use embassy_time::{Instant, Timer};
-use fixed::{types::extra::U10, FixedI32};
+use fixed::{FixedI32, types::extra::U10};
 use fixed_sqrt::FastSqrt;
 use gcode::{Command, UCoord};
 
 use crate::{
+    COMMAND_BUFFER_SIZE, CommandId,
     driver::{self, HomeError, StepsPerSecond},
     status_leds::{self, Status},
     util::ArrayZipWith,
-    CommandId, COMMAND_BUFFER_SIZE,
 };
 
 pub type ICoord = FixedI32<U10>;
@@ -89,6 +92,7 @@ pub struct State {
     axes: [Axis; AXES],
     resume_button: gpio::Input<'static>,
     status_leds: &'static status_leds::Control,
+    last_command_sent: Option<CommandId>,
 }
 
 impl State {
@@ -104,6 +108,34 @@ impl State {
             axes,
             resume_button,
             status_leds,
+            last_command_sent: None,
+        }
+    }
+
+    /// Returns whether we should wait for all previous commands to finish
+    /// before executing this command or whether we can just go ahead and do it.
+    /// For example,
+    ///
+    ///     G28 F20
+    ///     G0  X50 Z50 F30
+    ///     M18
+    ///
+    /// the first two commands can be run as soon as we get them, but the last
+    /// (disable all steppers) has to wait for the first two to complete, lest
+    /// we stop in the middle of a code!
+    fn should_synchronize(command: &gcode::Command<{ AXES + 1 }>) -> bool {
+        match command {
+            gcode::Command::RapidMove(_)
+            | gcode::Command::LinearMove(_)
+            | gcode::Command::Home { .. }
+            | gcode::Command::Stop
+            | gcode::Command::GetCurrentPosition => false,
+
+            gcode::Command::Dwell(_)
+            | gcode::Command::Park(_)
+            | gcode::Command::EnableAllSteppers
+            | gcode::Command::DisableAllSteppers
+            | gcode::Command::Pause => true,
         }
     }
 
@@ -116,12 +148,23 @@ impl State {
             (CommandId, Command<{ AXES + 1 } /* for F */>),
             COMMAND_BUFFER_SIZE,
         >,
+        last_completed: &'static signal::Signal<CriticalSectionRawMutex, CommandId>,
     ) -> ! {
         let start = Instant::now();
         let ts = || Instant::now().duration_since(start).as_micros();
         loop {
             let (command_id, command) = command_rx.receive().await;
             info!("got command (t={:tus})", ts());
+
+            if Self::should_synchronize(&command)
+                && let Some(last_command_sent) = self.last_command_sent
+            {
+                info!("synchronous command, waiting");
+                while last_command_sent != last_completed.wait().await {}
+            }
+
+            self.last_command_sent = Some(command_id);
+
             match command {
                 Command::Stop => continue,
                 Command::Dwell(duration) => {
