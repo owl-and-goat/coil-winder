@@ -17,7 +17,7 @@
   (into [:G28]
         (when feedrate [{feedrate-coord feedrate}])))
 (defn stop [] [:M0])
-(defn emergency-stop [] [:M112])
+(defn force-stop [] [:M112])
 (defn enable-all-steppers [] [:M17])
 (defn disable-all-steppers [] [:M18])
 (defn get-current-position [] [:M114])
@@ -189,6 +189,6 @@
   (run! (rest program))
   (run! (concat preamble program))
   (oneshot! (stop))
-  (oneshot! (emergency-stop))
+  (oneshot! (force-stop))
   (oneshot! (get-current-position))
   (oneshot! (pause)))

@@ -26,7 +26,7 @@ We've been using https://reprap.org/wiki/G-code for inspiration.
 
 + *M18* - Disable all steppers
 
-+ *M112* - Emergency stop
++ *M112* - Force stop (resets processor)
 
 + *M114* - Get current position
 
