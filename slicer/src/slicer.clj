@@ -17,6 +17,7 @@
   (into [:G28]
         (when feedrate [{feedrate-coord feedrate}])))
 (defn stop [] [:M0])
+(defn emergency-stop [] [:M112])
 (defn enable-all-steppers [] [:M17])
 (defn disable-all-steppers [] [:M18])
 (defn get-current-position [] [:M114])
@@ -162,11 +163,10 @@
      step-to-end]))
 
 (comment
-  (->> turns
-       (+ 1)
-       (range 1)
-       (map (fn [turn]
-              (rapid-move {:C turn :Z (+ bobbin-position (* turn wire-width))}))))
+  (run! [(enable-all-steppers)
+         (home :feedrate 20)
+         (rapid-move {:X 50 :Z 50} :feedrate 30)
+         (disable-all-steppers)])
 
   (def program
     (scramble-wind {:turns 5000
@@ -187,18 +187,8 @@
 
   (run! (concat preamble [(first program)]))
   (run! (rest program))
+  (run! (concat preamble program))
   (oneshot! (stop))
+  (oneshot! (emergency-stop))
   (oneshot! (get-current-position))
-
-  (oneshot! (enable-all-steppers))
-  (oneshot! (home :feedrate 30))
-  (oneshot! (rapid-move {:X 50 :Z 50} :feedrate 30))
-  (oneshot! (disable-all-steppers))
-  (run! [(enable-all-steppers)
-         (home :feedrate 20)
-         (rapid-move {:X 50 :Z 50} :feedrate 30)
-         (disable-all-steppers)])
-  (run! [(enable-all-steppers)
-         (home :feedrate 20)
-         (rapid-move {:X 50 :Z 50} :feedrate 30)
-         (disable-all-steppers)]))
+  (oneshot! (pause)))

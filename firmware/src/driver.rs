@@ -311,14 +311,15 @@ impl<'d, T: pio::Instance, const XSM: usize, const ZSM: usize, const CSM: usize>
         >,
     ) -> ! {
         'next_command: loop {
-            let command =
-                match select(self.command_rx.ready_to_receive(), cancel_rx.changed()).await {
-                    Either::First(_) => self.command_rx.try_receive().unwrap(),
-                    Either::Second(command_id) => {
-                        debug!("canceling wait for next command due to: {}", command_id);
-                        continue 'next_command;
-                    }
-                };
+            // NOTE: embassy does not specify whether Channel::receive() is
+            // cancel-safe! hopefully this works.
+            let command = match select(self.command_rx.receive(), cancel_rx.changed()).await {
+                Either::First(command) => command,
+                Either::Second(command_id) => {
+                    debug!("canceling wait for next command due to: {}", command_id);
+                    continue 'next_command;
+                }
+            };
 
             let command_id = match command {
                 CommandStarted::ReportDone(command_id) => command_id,
@@ -335,8 +336,8 @@ impl<'d, T: pio::Instance, const XSM: usize, const ZSM: usize, const CSM: usize>
                             command_id
                         }
 
-                        Either::Second(_) => {
-                            debug!("canceled home");
+                        Either::Second(command_id) => {
+                            debug!("canceled home: {}", command_id);
                             continue 'next_command;
                         }
                     }
@@ -361,7 +362,7 @@ impl<'d, T: pio::Instance, const XSM: usize, const ZSM: usize, const CSM: usize>
                         }
 
                         Either::Second(_) => {
-                            debug!("canceled move");
+                            debug!("canceled move: {}", command_id);
                             continue 'next_command;
                         }
                     }
