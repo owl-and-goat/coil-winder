@@ -8,7 +8,7 @@ use cyw43::JoinOptions;
 use cyw43_pio::{DEFAULT_CLOCK_DIVIDER, PioSpi};
 use defmt::*;
 use embassy_executor::{Executor, Spawner};
-use embassy_futures::select::Either;
+use embassy_futures::select::{Either, select};
 use embassy_net::StackResources;
 use embassy_rp::{
     Peri, bind_interrupts,
@@ -19,7 +19,7 @@ use embassy_rp::{
     pio::{InterruptHandler, Pio},
     watchdog::Watchdog,
 };
-use embassy_sync::{blocking_mutex::raw::CriticalSectionRawMutex, channel, signal};
+use embassy_sync::{blocking_mutex::raw::CriticalSectionRawMutex, channel, signal, watch};
 use embassy_time::{Duration, with_timeout};
 use static_cell::StaticCell;
 
@@ -44,6 +44,7 @@ pub(crate) const PORT: u16 = 1234;
 pub(crate) const MDNS_HOSTNAME: &str = "coil-winder";
 pub(crate) const AXES: usize = 4;
 pub(crate) const AXIS_LABELS: [char; AXES] = ['X', 'Z', 'C', 'F'];
+pub(crate) const CANCEL_WATCHERS: usize = 2;
 pub const COMMAND_BUFFER_SIZE: usize = 32;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Format)]
@@ -86,13 +87,26 @@ async fn motion_task(
         COMMAND_BUFFER_SIZE,
     >,
     last_completed: &'static signal::Signal<CriticalSectionRawMutex, CommandId>,
+    cancel_tx: watch::Sender<'static, CriticalSectionRawMutex, CommandId, CANCEL_WATCHERS>,
 ) -> ! {
-    motion.run(driver, command_rx, last_completed).await;
+    motion
+        .run(driver, command_rx, last_completed, cancel_tx)
+        .await;
 }
 
 #[embassy_executor::task]
-async fn driver_task(driver: driver::Driver<'static, PIO0, 1, 2, 3>) -> ! {
-    driver.run().await
+async fn driver_task(
+    mut driver: driver::Driver<'static, PIO0, 1, 2, 3>,
+    mut cancel_rx: watch::Receiver<'static, CriticalSectionRawMutex, CommandId, CANCEL_WATCHERS>,
+) -> ! {
+    loop {
+        match select(driver.run(), cancel_rx.changed()).await {
+            Either::Second(command_id) => {
+                info!("canceling driver run");
+                driver.stop(command_id).await;
+            }
+        }
+    }
 }
 
 #[embassy_executor::task]
@@ -105,8 +119,11 @@ async fn command_completion_task(
         COMMAND_BUFFER_SIZE,
     >,
     last_completed: &'static signal::Signal<CriticalSectionRawMutex, CommandId>,
+    cancel_rx: watch::Receiver<'static, CriticalSectionRawMutex, CommandId, CANCEL_WATCHERS>,
 ) -> ! {
-    command_completion.run(status_tx, last_completed).await
+    command_completion
+        .run(status_tx, last_completed, cancel_rx)
+        .await
 }
 
 #[embassy_executor::task]
@@ -336,6 +353,18 @@ fn main() -> ! {
         StaticCell::new();
     let last_completed: &'static _ = LAST_COMPLETED.init(signal::Signal::new());
 
+    static CANCEL_WATCH: StaticCell<
+        watch::Watch<CriticalSectionRawMutex, CommandId, CANCEL_WATCHERS>,
+    > = StaticCell::new();
+    let cancel_watch: &'static _ = CANCEL_WATCH.init(watch::Watch::new());
+    let cancel_tx = cancel_watch.sender();
+    let cancel_driver = cancel_watch
+        .receiver()
+        .expect("cancellation channel should have at least 1 receiver available");
+    let cancel_completion = cancel_watch
+        .receiver()
+        .expect("cancellation channel should have at least 1 receiver available");
+
     let watchdog = Watchdog::new(p.WATCHDOG);
 
     embassy_rp::multicore::spawn_core1(
@@ -376,11 +405,12 @@ fn main() -> ! {
                     driver_channel,
                 );
 
-                spawner.must_spawn(driver_task(driver));
+                spawner.must_spawn(driver_task(driver, cancel_driver));
                 spawner.must_spawn(command_completion_task(
                     command_completion,
                     status_tx,
                     last_completed,
+                    cancel_completion,
                 ));
 
                 spawner.must_spawn(motion_task(
@@ -417,6 +447,7 @@ fn main() -> ! {
                     driver_control,
                     command_rx,
                     last_completed,
+                    cancel_tx,
                 ))
             })
         },
