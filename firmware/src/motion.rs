@@ -177,6 +177,7 @@ impl State {
 
                 Command::Dwell(duration) => {
                     Timer::after_millis(duration.as_millis() as _).await;
+                    driver.report_done(command_id).await;
                 }
                 Command::EnableAllSteppers => {
                     info!("enabling steppers");
@@ -340,10 +341,12 @@ impl State {
                         Display2Format(&c),
                         f
                     );
+                    driver.report_done(command_id).await;
                 }
                 Command::Pause => {
                     self.status_leds.set_status(Status::Paused);
                     self.resume_button.wait_for_low().await;
+                    driver.report_done(command_id).await;
                 }
                 Command::Park(_) => {}
             }

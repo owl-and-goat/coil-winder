@@ -199,6 +199,9 @@ pub struct HomeError {
 
 #[derive(Debug, Clone, Copy)]
 pub enum Command {
+    /// XXX: used if we want to acknowledge that we finished a thing, but not
+    /// actually do a thing
+    ReportDone,
     Move {
         steps: [i32; 3],
         speeds: [StepsPerSecond; 3],
@@ -258,9 +261,14 @@ impl Control {
             .send((command_id, Command::Move { steps, speeds }))
             .await;
     }
+
+    pub async fn report_done(&self, command_id: CommandId) {
+        self.tx.send((command_id, Command::ReportDone)).await;
+    }
 }
 
 pub enum CommandStarted {
+    ReportDone(CommandId),
     SetSleep(CommandId),
     Home(CommandId),
     Move(CommandId),
@@ -303,7 +311,17 @@ impl<'d, T: pio::Instance, const XSM: usize, const ZSM: usize, const CSM: usize>
         >,
     ) -> ! {
         'next_command: loop {
-            let command_id = match self.command_rx.receive().await {
+            let command =
+                match select(self.command_rx.ready_to_receive(), cancel_rx.changed()).await {
+                    Either::First(_) => self.command_rx.try_receive().unwrap(),
+                    Either::Second(command_id) => {
+                        debug!("canceling wait for next command due to: {}", command_id);
+                        continue 'next_command;
+                    }
+                };
+
+            let command_id = match command {
+                CommandStarted::ReportDone(command_id) => command_id,
                 CommandStarted::SetSleep(command_id) => command_id,
                 CommandStarted::Home(command_id) => {
                     match select(
@@ -463,17 +481,30 @@ impl<'d, T: pio::Instance, const XSM: usize, const ZSM: usize, const CSM: usize>
                     let result = self.home(command_id, speeds).await;
                     self.home_tx.send(result).await
                 }
+                Command::ReportDone => {
+                    self.command_started_tx
+                        .send(CommandStarted::ReportDone(command_id))
+                        .await
+                }
             }
         }
     }
 
     pub async fn stop(&mut self, command_id: CommandId) {
         self.do_set_sleep(true);
+
         self.pio.apply_sm_batch(|batch| {
             each_axis!(self, |_, axis| {
                 batch.set_enable(&mut axis.sm, false);
             });
         });
+
+        // clear all PIO FIFOs so that we don't start executing old moves when
+        // one of the state machines gets re-enabled
+        each_axis!(self, |_, axis| {
+            axis.sm.clear_fifos();
+        });
+
         self.configured_program = None;
         debug!("halted state machines");
 
@@ -494,7 +525,6 @@ impl<'d, T: pio::Instance, const XSM: usize, const ZSM: usize, const CSM: usize>
         };
 
         each_axis!(self, |_i, axis| {
-            axis.sm.clear_fifos();
             axis.configure(self.clock_divider, program);
         });
 
