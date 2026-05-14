@@ -1,7 +1,10 @@
 //! Ref: https://www.allegromicro.com/-/media/files/datasheets/a4988-datasheet.pdf
 
 use defmt::{Format, debug, info};
-use embassy_futures::join::join;
+use embassy_futures::{
+    join::join,
+    select::{Either, select},
+};
 use embassy_rp::{
     Peri,
     gpio::{self, Level, Pull},
@@ -10,12 +13,12 @@ use embassy_rp::{
 };
 use embassy_sync::{
     blocking_mutex::raw::{CriticalSectionRawMutex, NoopRawMutex},
-    channel, signal,
+    channel, signal, watch,
 };
 use embassy_time::Instant;
 use fixed::types::extra::U8;
 
-use crate::{COMMAND_BUFFER_SIZE, CommandId, MotionStatusMsg};
+use crate::{CANCEL_WATCHERS, COMMAND_BUFFER_SIZE, CommandId, MotionStatusMsg};
 
 const PIO_TARGET_HZ: u32 =
     // 2 μs per cycle
@@ -261,6 +264,7 @@ pub enum CommandStarted {
     SetSleep(CommandId),
     Home(CommandId),
     Move(CommandId),
+    Stop(CommandId),
 }
 
 pub struct CommandCompletion<
@@ -291,14 +295,33 @@ impl<'d, T: pio::Instance, const XSM: usize, const ZSM: usize, const CSM: usize>
             COMMAND_BUFFER_SIZE,
         >,
         last_completed: &'static signal::Signal<CriticalSectionRawMutex, CommandId>,
+        mut cancel_rx: watch::Receiver<
+            'static,
+            CriticalSectionRawMutex,
+            CommandId,
+            CANCEL_WATCHERS,
+        >,
     ) -> ! {
-        loop {
+        'next_command: loop {
             let command_id = match self.command_rx.receive().await {
                 CommandStarted::SetSleep(command_id) => command_id,
                 CommandStarted::Home(command_id) => {
-                    join(self.irqs.0.wait(), self.irqs.1.wait()).await;
-                    self.home_done_tx.send(()).await;
-                    command_id
+                    match select(
+                        join(self.irqs.0.wait(), self.irqs.1.wait()),
+                        cancel_rx.changed(),
+                    )
+                    .await
+                    {
+                        Either::First(_) => {
+                            self.home_done_tx.send(()).await;
+                            command_id
+                        }
+
+                        Either::Second(_) => {
+                            debug!("canceled home");
+                            continue 'next_command;
+                        }
+                    }
                 }
                 CommandStarted::Move(command_id) => {
                     // FIXME: IRQ 2 never (visibly) fires, as the PIO block only
@@ -308,8 +331,25 @@ impl<'d, T: pio::Instance, const XSM: usize, const ZSM: usize, const CSM: usize>
                     //
                     // TODO: merge homing and ordinary movement programs and,
                     // instead of waiting on an IRQ, wait on the RX FIFO.
-                    join(self.irqs.0.wait(), self.irqs.1.wait()).await;
-                    debug!("finished moving");
+                    match select(
+                        join(self.irqs.0.wait(), self.irqs.1.wait()),
+                        cancel_rx.changed(),
+                    )
+                    .await
+                    {
+                        Either::First(_) => {
+                            debug!("finished moving");
+                            command_id
+                        }
+
+                        Either::Second(_) => {
+                            debug!("canceled move");
+                            continue 'next_command;
+                        }
+                    }
+                }
+                CommandStarted::Stop(command_id) => {
+                    status_tx.clear();
                     command_id
                 }
             };
@@ -413,7 +453,7 @@ impl<'d, T: pio::Instance, const XSM: usize, const ZSM: usize, const CSM: usize>
         )
     }
 
-    pub async fn run(mut self) -> ! {
+    pub async fn run(&mut self) -> ! {
         loop {
             let (command_id, command) = self.rx.receive().await;
             match command {
@@ -427,6 +467,22 @@ impl<'d, T: pio::Instance, const XSM: usize, const ZSM: usize, const CSM: usize>
         }
     }
 
+    pub async fn stop(&mut self, command_id: CommandId) {
+        self.do_set_sleep(true);
+        self.pio.apply_sm_batch(|batch| {
+            each_axis!(self, |_, axis| {
+                batch.set_enable(&mut axis.sm, false);
+            });
+        });
+        self.configured_program = None;
+        debug!("halted state machines");
+
+        self.command_started_tx.clear();
+        self.command_started_tx
+            .send(CommandStarted::Stop(command_id))
+            .await;
+    }
+
     fn configure_pio(&mut self, which_program: ConfiguredProgram) {
         if self.configured_program == Some(which_program) {
             return;
@@ -438,6 +494,7 @@ impl<'d, T: pio::Instance, const XSM: usize, const ZSM: usize, const CSM: usize>
         };
 
         each_axis!(self, |_i, axis| {
+            axis.sm.clear_fifos();
             axis.configure(self.clock_divider, program);
         });
 
@@ -457,11 +514,15 @@ impl<'d, T: pio::Instance, const XSM: usize, const ZSM: usize, const CSM: usize>
     }
 
     async fn set_sleep(&mut self, command_id: CommandId, sleep: bool) {
-        self.sleep_pin
-            .set_level(if sleep { Level::Low } else { Level::High });
+        self.do_set_sleep(sleep);
         self.command_started_tx
             .send(CommandStarted::SetSleep(command_id))
             .await
+    }
+
+    fn do_set_sleep(&mut self, sleep: bool) {
+        self.sleep_pin
+            .set_level(if sleep { Level::Low } else { Level::High });
     }
 
     async fn home(

@@ -3,7 +3,7 @@ use defmt::{Display2Format, Format, info};
 use embassy_rp::gpio;
 use embassy_sync::{
     blocking_mutex::raw::{CriticalSectionRawMutex, RawMutex},
-    channel, signal,
+    channel, signal, watch,
 };
 use embassy_time::{Instant, Timer};
 use fixed::{FixedI32, types::extra::U10};
@@ -11,7 +11,7 @@ use fixed_sqrt::FastSqrt;
 use gcode::{Command, UCoord};
 
 use crate::{
-    COMMAND_BUFFER_SIZE, CommandId,
+    CANCEL_WATCHERS, COMMAND_BUFFER_SIZE, CommandId,
     driver::{self, HomeError, StepsPerSecond},
     status_leds::{self, Status},
     util::ArrayZipWith,
@@ -150,6 +150,7 @@ impl State {
             COMMAND_BUFFER_SIZE,
         >,
         last_completed: &'static signal::Signal<CriticalSectionRawMutex, CommandId>,
+        cancel_tx: watch::Sender<'static, CriticalSectionRawMutex, CommandId, CANCEL_WATCHERS>,
     ) -> ! {
         let start = Instant::now();
         let ts = || Instant::now().duration_since(start).as_micros();
@@ -167,7 +168,13 @@ impl State {
             self.last_command_sent = Some(command_id);
 
             match command {
-                Command::Stop | Command::EmergencyStop => continue,
+                Command::EmergencyStop => continue,
+
+                Command::Stop => {
+                    cancel_tx.send(command_id);
+                    self.is_homed = false;
+                }
+
                 Command::Dwell(duration) => {
                     Timer::after_millis(duration.as_millis() as _).await;
                 }

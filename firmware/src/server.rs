@@ -131,26 +131,33 @@ impl Server {
                             warn!("write error: {}", e);
                         }
 
-                        // TODO: handle gcode::Command::Stop
+                        match command {
+                            gcode::Command::EmergencyStop => {
+                                resp_buf.fill(0);
+                                writeln!(&mut resp_buf[..], "(done {})", command_id.0).unwrap();
 
-                        if command == gcode::Command::EmergencyStop {
-                            resp_buf.fill(0);
-                            writeln!(&mut resp_buf[..], "(done {})", command_id.0).unwrap();
+                                if let Err(e) = socket.write_all(&resp_buf).await {
+                                    warn!("write error: {}", e);
+                                }
 
-                            if let Err(e) = socket.write_all(&resp_buf).await {
-                                warn!("write error: {}", e);
+                                if let Err(e) = socket.flush().await {
+                                    warn!("flush error: {}", e);
+                                }
+
+                                socket.close();
+
+                                // XXX(nausicaa): this sure as hell stops it lol
+                                self.watchdog.trigger_reset();
                             }
 
-                            if let Err(e) = socket.flush().await {
-                                warn!("flush error: {}", e);
+                            gcode::Command::Stop => {
+                                self.command_tx.clear();
+                                self.command_tx
+                                    .send((command_id, gcode::Command::Stop))
+                                    .await;
                             }
 
-                            socket.close();
-
-                            // XXX(nausicaa): this sure as hell stops it lol
-                            self.watchdog.trigger_reset();
-                        } else {
-                            self.command_tx.send((command_id, command)).await;
+                            command => self.command_tx.send((command_id, command)).await,
                         }
                     }
                 }
