@@ -475,6 +475,9 @@ impl<'d, T: pio::Instance, const XSM: usize, const ZSM: usize, const CSM: usize>
         )
     }
 
+    /// NOTE: i'm relatively sure this is cancel-safe *so long as you call
+    /// stop() afterwards* because of the cleanup we do, but am not totally sure
+    /// about that.
     pub async fn run(&mut self) -> ! {
         loop {
             let (command_id, command) = self.rx.receive().await;
