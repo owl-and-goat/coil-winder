@@ -311,15 +311,18 @@ impl<'d, T: pio::Instance, const XSM: usize, const ZSM: usize, const CSM: usize>
         >,
     ) -> ! {
         'next_command: loop {
-            // NOTE: embassy does not specify whether Channel::receive() is
-            // cancel-safe! hopefully this works.
-            let command = match select(self.command_rx.receive(), cancel_rx.changed()).await {
-                Either::First(command) => command,
-                Either::Second(command_id) => {
-                    debug!("canceling wait for next command due to: {}", command_id);
-                    continue 'next_command;
-                }
-            };
+            let command =
+                match select(self.command_rx.ready_to_receive(), cancel_rx.changed()).await {
+                    Either::First(_) => match self.command_rx.try_receive() {
+                        Ok(command) => command,
+                        Err(_) => continue 'next_command,
+                    },
+
+                    Either::Second(command_id) => {
+                        debug!("canceling wait for next command due to: {}", command_id);
+                        continue 'next_command;
+                    }
+                };
 
             let command_id = match command {
                 CommandStarted::ReportDone(command_id) => command_id,
