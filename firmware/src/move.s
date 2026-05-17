@@ -17,5 +17,5 @@ sleep:                          ; sleep for y cycles
     jmp x-- step                ; step again
     ;; inner (step) loop done, jump back to top of outer loop
 end:
-    irq 0 rel                   ; let firmware know we're finished
+    irq wait 0 rel              ; set IRQ and wait for firmware to clear it
     jmp main

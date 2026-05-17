@@ -63,7 +63,7 @@ impl Server {
                 .await
                 {
                     Either::Second(MotionStatusMsg::CommandFinished(CommandId(id))) => {
-                        debug!("Sending status message");
+                        debug!("Sending status message (finished #{})", id);
                         let mut done = [0u8; 64];
                         {
                             use embedded_io::Write;
