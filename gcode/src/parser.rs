@@ -4,17 +4,36 @@ use core::time::Duration;
 
 use heapless::Vec;
 use nom::{
+    AsChar, IResult, Parser,
     branch::alt,
-    bytes::complete::{tag, take_while1},
+    bytes::complete::{tag, take_till, take_while1},
     character::complete::{char, multispace1},
     combinator::{map, map_res, opt, value},
     error::ErrorKind,
+    multi::fold_many1,
     number::complete::recognize_float,
     sequence::preceded,
-    AsChar, IResult, Parser,
 };
 
 use crate::ast::{Command, UCoord, UPos};
+
+pub fn comment(i: &[u8]) -> IResult<&[u8], ()> {
+    let (mut i, _) = char('(')(i)?;
+    while !(i.is_empty() || i.get(0).is_some_and(|x| *x == b')')) {
+        (i, _) = take_till(|c| [b'(', b')'].contains(&c))(i)?;
+        (i, _) = opt(comment).parse(i)?;
+    }
+    let (i, _) = char(')')(i)?;
+    Ok((i, ()))
+}
+
+pub fn whitespace1(i: &[u8]) -> IResult<&[u8], ()> {
+    fold_many1(alt((comment, multispace1.map(|_| ()))), || (), |(), _| ()).parse(i)
+}
+
+pub fn whitespace0(i: &[u8]) -> IResult<&[u8], ()> {
+    opt(whitespace1).map(|_| ()).parse(i)
+}
 
 pub fn ucoord(i: &[u8]) -> IResult<&[u8], UCoord> {
     let (i, txt) = recognize_float(i)?;
@@ -37,7 +56,11 @@ pub fn upos<const AXES: usize>(
         for c in coord_labels {
             let coord;
             (i, coord) = opt(preceded(
-                take_while1(|c| c == b' ' || c == b'\t'),
+                fold_many1(
+                    alt((char(' ').map(|_| ()), char('\t').map(|_| ()), comment)),
+                    || (),
+                    |(), _| (),
+                ),
                 labeled_ucoord(c),
             ))
             .parse(i)?;
@@ -85,7 +108,7 @@ pub fn upos_g_command<const AXES: usize>(
 ) -> impl Fn(&[u8]) -> IResult<&[u8], Command<AXES>> {
     move |i| {
         let (i, _) = g(g_code)(i)?;
-        let (i, _) = multispace1(i)?;
+        let (i, _) = whitespace1(i)?;
         let (i, pos) = upos(coord_labels)(i)?;
         Ok((i, mk_command(pos)))
     }
@@ -105,13 +128,13 @@ pub fn non_empty_upos_g_command<const AXES: usize>(
 
 pub fn home<const AXES: usize>(i: &[u8]) -> IResult<&[u8], Command<AXES>> {
     let (i, _) = g("28")(i)?;
-    let (i, f) = opt(preceded(multispace1, labeled_ucoord('F'))).parse(i)?;
+    let (i, f) = opt(preceded(whitespace1, labeled_ucoord('F'))).parse(i)?;
     Ok((i, Command::Home { f }))
 }
 
 pub fn dwell<const AXES: usize>(i: &[u8]) -> IResult<&[u8], Command<AXES>> {
     let (i, _) = g("4")(i)?;
-    let (i, _) = multispace1(i)?;
+    let (i, _) = whitespace1(i)?;
     let (i, dur) = alt((
         preceded(
             char('S'),
@@ -136,17 +159,20 @@ pub fn command<const AXES: usize>(
     coord_labels: [char; AXES],
 ) -> impl Fn(&[u8]) -> IResult<&[u8], Command<AXES>> {
     move |i| {
-        alt((
-            non_empty_upos_g_command("0", coord_labels, Command::RapidMove),
-            non_empty_upos_g_command("1", coord_labels, Command::LinearMove),
-            dwell,
-            value(Command::Stop, m("0")),
-            value(Command::EnableAllSteppers, m("17")),
-            value(Command::DisableAllSteppers, m("18")),
-            home,
-            value(Command::GetCurrentPosition, m("114")),
-            value(Command::Pause, m("226")),
-        ))
+        preceded(
+            whitespace0,
+            alt((
+                non_empty_upos_g_command("0", coord_labels, Command::RapidMove),
+                non_empty_upos_g_command("1", coord_labels, Command::LinearMove),
+                dwell,
+                value(Command::Stop, m("0")),
+                value(Command::EnableAllSteppers, m("17")),
+                value(Command::DisableAllSteppers, m("18")),
+                home,
+                value(Command::GetCurrentPosition, m("114")),
+                value(Command::Pause, m("226")),
+            )),
+        )
         .parse(i)
     }
 }
@@ -178,7 +204,12 @@ mod tests {
             let axis_labels = $axis_labels;
             let (rem, res) = command(axis_labels)($input).unwrap();
             let expected = $expected;
-            assert_eq!(rem, b"");
+            assert_eq!(
+                rem,
+                b"",
+                "unparsed remainder: {:?}",
+                core::str::from_utf8(rem)
+            );
             assert_eq!(res, expected);
             round_trip(expected, axis_labels);
         };
@@ -314,6 +345,59 @@ mod tests {
             Command::Home {
                 f: Some(FixedU32::lit("40"))
             }
+        );
+    }
+
+    #[test]
+    fn comment_whole_line() {
+        test_parse!(
+            XYZ,
+            b"(hi, this is a comment!)\nG0 X1 Y1",
+            Command::RapidMove(UPos([
+                Some("1".parse().unwrap()),
+                Some("1".parse().unwrap()),
+                None,
+            ]))
+        );
+    }
+
+    #[test]
+    fn comment_inside_command() {
+        test_parse!(
+            XYZ,
+            b"G0 X1 Y1 (z should become two!) Z2",
+            Command::RapidMove(UPos([
+                Some("1".parse().unwrap()),
+                Some("1".parse().unwrap()),
+                Some("2".parse().unwrap())
+            ]))
+        );
+    }
+
+    #[test]
+    fn nested_comment_inside_command() {
+        let _ = comment.parse(b"(z should (not) become seven!)").unwrap();
+        let _ = preceded(
+            fold_many1(
+                alt((comment, char(' ').map(|_| ()), char('\t').map(|_| ()))),
+                || (),
+                |(), _| (),
+            ),
+            |i| {
+                eprintln!("{}", str::from_utf8(i).unwrap());
+                labeled_ucoord('Z').parse(i)
+            },
+        )
+        .parse(b" (z should (not) become seven!) Z2")
+        .unwrap();
+        test_parse!(
+            XYZ,
+            b"G0 X1 Y1 (z should (not) become seven!) Z2",
+            Command::RapidMove(UPos([
+                Some("1".parse().unwrap()),
+                Some("1".parse().unwrap()),
+                Some("2".parse().unwrap())
+            ]))
         );
     }
 }
