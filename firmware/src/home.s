@@ -14,6 +14,6 @@ sleep:                          ; sleep for x cycles
     jmp y-- sleep
     jmp x-- loop                ; repeat if we're not out of steps
 end:
+    irq wait 0 rel              ; set IRQ and wait for firmware to clear it
     mov isr, x                  ; report how many steps we have left
     push block
-    irq 0 rel

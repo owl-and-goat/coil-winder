@@ -2,7 +2,7 @@
 
 use defmt::{Format, debug, info};
 use embassy_futures::{
-    join::join,
+    join::{join, join3},
     select::{Either, select},
 };
 use embassy_rp::{
@@ -328,6 +328,7 @@ impl<'d, T: pio::Instance, const XSM: usize, const ZSM: usize, const CSM: usize>
                 CommandStarted::ReportDone(command_id) => command_id,
                 CommandStarted::SetSleep(command_id) => command_id,
                 CommandStarted::Home(command_id) => {
+                    debug!("starting home {}", command_id);
                     match select(
                         join(self.irqs.0.wait(), self.irqs.1.wait()),
                         cancel_rx.changed(),
@@ -335,6 +336,7 @@ impl<'d, T: pio::Instance, const XSM: usize, const ZSM: usize, const CSM: usize>
                     .await
                     {
                         Either::First(_) => {
+                            debug!("finished home {}", command_id);
                             self.home_done_tx.send(()).await;
                             command_id
                         }
@@ -346,21 +348,30 @@ impl<'d, T: pio::Instance, const XSM: usize, const ZSM: usize, const CSM: usize>
                     }
                 }
                 CommandStarted::Move(command_id) => {
-                    // FIXME: IRQ 2 never (visibly) fires, as the PIO block only
-                    // has two external IRQ lines. however, each of these tasks
-                    // /should/ in theory take the same amount of time, so
-                    // waiting on two axes is good enough for testing.
-                    //
                     // TODO: merge homing and ordinary movement programs and,
-                    // instead of waiting on an IRQ, wait on the RX FIFO.
+                    // instead of waiting on an IRQ, wait on the RX FIFO? would
+                    // allow move result queueing, which gives us a little slack
                     match select(
-                        join(self.irqs.0.wait(), self.irqs.1.wait()),
+                        join3(
+                            async {
+                                self.irqs.0.wait().await;
+                                debug!("irq 0 fired {}", command_id);
+                            },
+                            async {
+                                self.irqs.1.wait().await;
+                                debug!("irq 1 fired {}", command_id);
+                            },
+                            async {
+                                self.irqs.2.wait().await;
+                                debug!("irq 2 fired {}", command_id);
+                            },
+                        ),
                         cancel_rx.changed(),
                     )
                     .await
                     {
                         Either::First(_) => {
-                            debug!("finished moving");
+                            debug!("finished moving {}", command_id);
                             command_id
                         }
 
@@ -375,9 +386,11 @@ impl<'d, T: pio::Instance, const XSM: usize, const ZSM: usize, const CSM: usize>
                     command_id
                 }
             };
+            debug!("sending finished {}", command_id);
             status_tx
                 .send(MotionStatusMsg::CommandFinished(command_id))
                 .await;
+            debug!("sent finished {}", command_id);
             last_completed.signal(command_id);
         }
     }
@@ -481,6 +494,7 @@ impl<'d, T: pio::Instance, const XSM: usize, const ZSM: usize, const CSM: usize>
     pub async fn run(&mut self) -> ! {
         loop {
             let (command_id, command) = self.rx.receive().await;
+            debug!("sending command id {}", command_id);
             match command {
                 Command::Move { steps, speeds } => self.do_move(command_id, steps, speeds).await,
                 Command::SetSleep(sleep) => self.set_sleep(command_id, sleep).await,
@@ -513,7 +527,7 @@ impl<'d, T: pio::Instance, const XSM: usize, const ZSM: usize, const CSM: usize>
         });
 
         self.configured_program = None;
-        debug!("halted state machines");
+        debug!("halted state machines {}", command_id);
 
         self.command_started_tx.clear();
         self.command_started_tx
@@ -551,7 +565,9 @@ impl<'d, T: pio::Instance, const XSM: usize, const ZSM: usize, const CSM: usize>
     }
 
     async fn set_sleep(&mut self, command_id: CommandId, sleep: bool) {
+        debug!("setting sleep {}", command_id);
         self.do_set_sleep(sleep);
+
         self.command_started_tx
             .send(CommandStarted::SetSleep(command_id))
             .await
@@ -567,7 +583,7 @@ impl<'d, T: pio::Instance, const XSM: usize, const ZSM: usize, const CSM: usize>
         command_id: CommandId,
         speeds: [(u32, StepsPerSecond); 2],
     ) -> Result<(), HomeError> {
-        debug!("homing");
+        debug!("homing {}", command_id);
         self.configure_pio(ConfiguredProgram::Home);
 
         let mut speeds = speeds.into_iter();
@@ -627,15 +643,17 @@ impl<'d, T: pio::Instance, const XSM: usize, const ZSM: usize, const CSM: usize>
         steps: [i32; 3],
         speeds: [StepsPerSecond; 3],
     ) {
-        info!("driver do_move (t={:tus})", Instant::now());
+        info!("driver do_move {} (t={:tus})", command_id, Instant::now());
         self.configure_pio(ConfiguredProgram::Move);
 
         each_axis!(self, |i, axis| {
             // corresponds to [pull block] instructions in steps.s
             axis.sm.tx().wait_push(steps[i].unsigned_abs()).await;
+            debug!("pushed {} steps", steps[i]);
             axis.push_speed(speeds[i], Direction::from(steps[i])).await;
+            // debug!("pushed {} speeds", speeds[i]);
         });
-        info!("pushed speeds (t={:tus})", Instant::now());
+        info!("pushed speeds {} (t={:tus})", command_id, Instant::now());
 
         self.command_started_tx
             .send(CommandStarted::Move(command_id))

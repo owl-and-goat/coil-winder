@@ -80,6 +80,9 @@
 (def programs-dir
   (fs/path project-dir "programs"))
 
+(defn save-program-as [filename program]
+  (spit (str (fs/path programs-dir filename)) program))
+
 (def coil-winder-client-path
   (fs/path project-dir "client/target/release/client"))
 
@@ -163,32 +166,30 @@
      step-to-end]))
 
 (comment
-  (run! [(enable-all-steppers)
-         (home :feedrate 20)
-         (rapid-move {:X 50 :Z 50} :feedrate 30)
-         (disable-all-steppers)])
-
-  (def program
-    (scramble-wind {:turns 5000
-                    :bobbin/position 43.5
+  (def bare-program
+    (scramble-wind {:turns 60
+                    :bobbin/position 42.35
                     :bobbin/width 8.25
-                    :wire/width 0.06335}))
+                    :wire/width 0.06335
+                    :feedrate 120}))
 
-  (->> (scramble-wind {:turns 5000
-                       :bobbin/position 42.35
-                       :bobbin/width 8.25
-                       :wire/width 0.06335
-                       :feedrate 5})
+  (->> bare-program
        gcode-program
        gcode->str
-       (spit (str (fs/path programs-dir "pickup-1.gcode"))))
+       (save-program-as "pickup-1.gcode"))
 
-  (oneshot! (first program))
+  (run! (gcode-program bare-program))
 
-  (run! (concat preamble [(first program)]))
-  (run! (rest program))
-  (run! (concat preamble program))
   (oneshot! (stop))
   (oneshot! (force-stop))
-  (oneshot! (get-current-position))
-  (oneshot! (pause)))
+
+  ;; leftover from testing, can remove eventually?
+  (run! [(enable-all-steppers)
+         (home)
+         (rapid-move {}  :feedrate 20)
+         (rapid-move {:X 0 :Z  0 :C 0})
+         (rapid-move {:X 0 :Z 10 :C 1})
+         (rapid-move {:X 0 :Z 20 :C 2})
+         (rapid-move {:X 0 :Z 30 :C 3})
+         (rapid-move {:X 0 :Z 40 :C 4})
+         (disable-all-steppers)]))
