@@ -183,6 +183,22 @@
   (oneshot! (stop))
   (oneshot! (force-stop))
 
+  (run!
+   (concat [(enable-all-steppers)
+            (home)]
+           (:commands
+            (reduce
+             (fn [{:keys [commands c-pos]} portion]
+               (let [feedrate (* 240 portion)
+                     seconds-per 0.1
+                     c-pos (+ c-pos (* (/ feedrate 45) seconds-per))]
+                 {:commands (into commands
+                                  [(rapid-move {:C c-pos} :feedrate feedrate)])
+                  :c-pos c-pos}))
+             {:commands [] :c-pos 0}
+             (range 0 1 0.05)))
+           [(disable-all-steppers)]))
+
   ;; leftover from testing, can remove eventually?
   (run! [(enable-all-steppers)
          (home)
