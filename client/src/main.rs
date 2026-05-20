@@ -4,25 +4,25 @@ use std::{
     io::{BufRead, ErrorKind, Read},
     net::SocketAddr,
     sync::{
-        atomic::{AtomicBool, Ordering},
         Arc,
+        atomic::{AtomicBool, Ordering},
     },
 };
 
 use clap::Parser;
 use clio::Input;
-use eyre::{bail, eyre, Result};
+use eyre::{Result, bail, eyre};
 use indicatif::{MultiProgress, ProgressBar, ProgressStyle};
 use lexpr::Value;
 use rustyline_async::ReadlineEvent;
 use tokio::{
     io::{self, AsyncBufReadExt, AsyncWriteExt, BufReader},
-    net::{tcp, TcpStream, ToSocketAddrs},
+    net::{TcpStream, ToSocketAddrs, tcp},
     select, signal,
-    sync::{mpsc, Mutex},
+    sync::{Mutex, mpsc},
     task::JoinHandle,
 };
-use tracing::{debug, info, instrument, warn, Level};
+use tracing::{Level, debug, info, instrument, warn};
 
 const AXES: usize = 4;
 const AXIS_LABELS: [char; AXES] = ['X', 'Z', 'C', 'F'];

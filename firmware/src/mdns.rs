@@ -3,11 +3,11 @@
 use core::net::{Ipv4Addr, Ipv6Addr};
 
 use defmt::*;
+use edge_mdns::HostAnswersMdnsHandler;
 use edge_mdns::buf::VecBufAccess;
 use edge_mdns::domain::base::Ttl;
 use edge_mdns::host::Host;
 use edge_mdns::io::{self, IPV4_DEFAULT_SOCKET};
-use edge_mdns::HostAnswersMdnsHandler;
 use edge_nal::UdpSplit;
 use edge_nal_embassy::{Udp, UdpBuffers};
 use embassy_net::Stack;
