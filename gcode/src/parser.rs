@@ -19,7 +19,7 @@ use crate::ast::{Command, UCoord, UPos};
 
 pub fn comment(i: &[u8]) -> IResult<&[u8], ()> {
     let (mut i, _) = char('(')(i)?;
-    while !(i.is_empty() || i.get(0).is_some_and(|x| *x == b')')) {
+    while !(i.is_empty() || i.first().is_some_and(|x| *x == b')')) {
         (i, _) = take_till(|c| [b'(', b')'].contains(&c))(i)?;
         (i, _) = opt(comment).parse(i)?;
     }
