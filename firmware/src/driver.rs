@@ -1,10 +1,7 @@
 //! Ref: https://www.allegromicro.com/-/media/files/datasheets/a4988-datasheet.pdf
 
 use defmt::{Format, debug, info};
-use embassy_futures::{
-    join::{join, join3},
-    select::{Either, select},
-};
+use embassy_futures::join::{join, join3};
 use embassy_rp::{
     Peri,
     gpio::{self, Level, Pull},
@@ -13,12 +10,15 @@ use embassy_rp::{
 };
 use embassy_sync::{
     blocking_mutex::raw::{CriticalSectionRawMutex, NoopRawMutex},
-    channel, signal, watch,
+    channel, signal,
 };
 use embassy_time::Instant;
 use fixed::types::extra::U8;
 
-use crate::{CANCEL_WATCHERS, COMMAND_BUFFER_SIZE, CommandId, MotionStatusMsg};
+use crate::{
+    CANCEL_WATCHERS, COMMAND_BUFFER_SIZE, CommandId, MotionStatusMsg,
+    cancellation::{self, Cancelled},
+};
 
 const PIO_TARGET_HZ: u32 =
     // 2 μs per cycle
@@ -303,45 +303,37 @@ impl<'d, T: pio::Instance, const XSM: usize, const ZSM: usize, const CSM: usize>
             COMMAND_BUFFER_SIZE,
         >,
         last_completed: &'static signal::Signal<CriticalSectionRawMutex, CommandId>,
-        mut cancel_rx: watch::Receiver<
-            'static,
-            CriticalSectionRawMutex,
-            CommandId,
-            CANCEL_WATCHERS,
-        >,
+        mut cancel_rx: cancellation::Receiver<'static, CriticalSectionRawMutex, CANCEL_WATCHERS>,
     ) -> ! {
         'next_command: loop {
-            let command =
-                match select(self.command_rx.ready_to_receive(), cancel_rx.changed()).await {
-                    Either::First(_) => match self.command_rx.try_receive() {
-                        Ok(command) => command,
-                        Err(_) => continue 'next_command,
-                    },
+            let command = match cancel_rx.try_(self.command_rx.ready_to_receive()).await {
+                Ok(()) => match self.command_rx.try_receive() {
+                    Ok(command) => command,
+                    Err(_) => continue 'next_command,
+                },
 
-                    Either::Second(command_id) => {
-                        debug!("canceling wait for next command due to: {}", command_id);
-                        continue 'next_command;
-                    }
-                };
+                Err(Cancelled(command_id)) => {
+                    debug!("canceling wait for next command due to: {}", command_id);
+                    continue 'next_command;
+                }
+            };
 
             let command_id = match command {
                 CommandStarted::ReportDone(command_id) => command_id,
                 CommandStarted::SetSleep(command_id) => command_id,
                 CommandStarted::Home(command_id) => {
                     debug!("starting home {}", command_id);
-                    match select(
-                        join(self.irqs.0.wait(), self.irqs.1.wait()),
-                        cancel_rx.changed(),
-                    )
-                    .await
+                    match cancel_rx
+                        .try_(join(self.irqs.0.wait(), self.irqs.1.wait()))
+                        .await
                     {
-                        Either::First(_) => {
+                        Ok(((), ())) => {
                             debug!("finished home {}", command_id);
                             self.home_done_tx.send(()).await;
                             command_id
                         }
 
-                        Either::Second(command_id) => {
+                        Err(Cancelled(command_id)) => {
                             debug!("canceled home: {}", command_id);
                             continue 'next_command;
                         }
@@ -351,8 +343,8 @@ impl<'d, T: pio::Instance, const XSM: usize, const ZSM: usize, const CSM: usize>
                     // TODO: merge homing and ordinary movement programs and,
                     // instead of waiting on an IRQ, wait on the RX FIFO? would
                     // allow move result queueing, which gives us a little slack
-                    match select(
-                        join3(
+                    match cancel_rx
+                        .try_(join3(
                             async {
                                 self.irqs.0.wait().await;
                                 debug!("irq 0 fired {}", command_id);
@@ -365,17 +357,15 @@ impl<'d, T: pio::Instance, const XSM: usize, const ZSM: usize, const CSM: usize>
                                 self.irqs.2.wait().await;
                                 debug!("irq 2 fired {}", command_id);
                             },
-                        ),
-                        cancel_rx.changed(),
-                    )
-                    .await
+                        ))
+                        .await
                     {
-                        Either::First(_) => {
+                        Ok(((), (), ())) => {
                             debug!("finished moving {}", command_id);
                             command_id
                         }
 
-                        Either::Second(_) => {
+                        Err(Cancelled(command_id)) => {
                             debug!("canceled move: {}", command_id);
                             continue 'next_command;
                         }
