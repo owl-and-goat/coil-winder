@@ -4,25 +4,25 @@ use std::{
     io::{BufRead, ErrorKind, Read},
     net::SocketAddr,
     sync::{
-        Arc,
         atomic::{AtomicBool, Ordering},
+        Arc,
     },
 };
 
 use clap::Parser;
 use clio::Input;
-use eyre::{Result, bail, eyre};
+use eyre::{bail, eyre, Result};
 use indicatif::{MultiProgress, ProgressBar, ProgressStyle};
 use lexpr::Value;
 use rustyline_async::ReadlineEvent;
 use tokio::{
     io::{self, AsyncBufReadExt, AsyncWriteExt, BufReader},
-    net::{TcpStream, ToSocketAddrs, tcp},
+    net::{tcp, TcpStream, ToSocketAddrs},
     select, signal,
-    sync::{Mutex, mpsc},
+    sync::{mpsc, Mutex},
     task::JoinHandle,
 };
-use tracing::{Level, debug, info, instrument, warn};
+use tracing::{debug, info, instrument, warn, Level};
 
 const AXES: usize = 4;
 const AXIS_LABELS: [char; AXES] = ['X', 'Z', 'C', 'F'];
@@ -48,6 +48,13 @@ enum Command {
         /// Skip verification that the program parses before running
         #[clap(long)]
         no_verify: bool,
+    },
+
+    /// Parse and validate, but do not run, a gcode program
+    Validate {
+        /// Path to gcode program to validate
+        #[clap(value_parser)]
+        program: Input,
     },
 }
 
@@ -407,6 +414,10 @@ async fn main() -> Result<()> {
                 }
             }
 
+            Ok(())
+        }
+        Command::Validate { program } => {
+            read_commands(program, true)?;
             Ok(())
         }
         Command::Repl => loop {

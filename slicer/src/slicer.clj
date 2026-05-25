@@ -108,6 +108,10 @@
     (println "RUNNING: " gcode-str)
     (coil-winder-client! "oneshot" "-c" gcode-str)))
 
+(defn validate! [gcode]
+  (let [res (coil-winder-client! "validate" "-" :in (gcode->str gcode))]
+    (if (zero? (:exit res)) :ok res)))
+
 (defn run! [gcode]
   (coil-winder-client! "run" "-" :in (gcode->str gcode)))
 
