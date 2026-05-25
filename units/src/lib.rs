@@ -1,3 +1,5 @@
+#![cfg_attr(not(test), no_std)]
+
 use defmt::{Display2Format, Format};
 use derive_more::{From, Into};
 use fixed::{types::extra::U10, FixedI32, FixedU32};

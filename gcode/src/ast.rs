@@ -1,23 +1,19 @@
 use core::fmt::{self, Display};
 use core::time::Duration;
 
-use fixed::{FixedU32, types::extra::U10};
-
-// TODO(aspen): Consider making this signed after all, in case we want to rotate the spindle
-// backwards(?)
-pub type UCoord = FixedU32<U10>;
+use units::UNum;
 
 #[derive(Debug, PartialEq, Eq, Clone, Copy)]
-pub struct UPos<const AXES: usize>(pub [Option<UCoord>; AXES]);
+pub struct UPos<const AXES: usize>(pub [Option<UNum>; AXES]);
 
-impl<const AXES: usize> From<[Option<UCoord>; AXES]> for UPos<AXES> {
-    fn from(coordinates: [Option<UCoord>; AXES]) -> Self {
+impl<const AXES: usize> From<[Option<UNum>; AXES]> for UPos<AXES> {
+    fn from(coordinates: [Option<UNum>; AXES]) -> Self {
         Self(coordinates)
     }
 }
 
-impl<const AXES: usize> From<[UCoord; AXES]> for UPos<AXES> {
-    fn from(coordinates: [UCoord; AXES]) -> Self {
+impl<const AXES: usize> From<[UNum; AXES]> for UPos<AXES> {
+    fn from(coordinates: [UNum; AXES]) -> Self {
         Self(coordinates.map(Some))
     }
 }
@@ -34,7 +30,7 @@ pub enum Command<const AXES: usize> {
     /// G27
     Park(Option<UPos<AXES>>),
     /// G28 [F<speed>]
-    Home { f: Option<UCoord> },
+    Home { f: Option<UNum> },
 
     // M-codes
     /// M0

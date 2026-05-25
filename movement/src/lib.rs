@@ -1,10 +1,6 @@
 #![cfg_attr(not(test), no_std)]
 
-use crate::units::{
-    Coord, IMillimeters, INum, MillimetersPerSecond, MillimetersPerSecondSquared, UNum,
-};
-
-pub mod units;
+use units::{Coord, IMillimeters, INum, MillimetersPerSecond, MillimetersPerSecondSquared, UNum};
 
 #[derive(Debug, Clone, Copy, PartialEq)]
 enum PlanPhase {
@@ -380,10 +376,9 @@ impl Iterator for StreamingPlan {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::units::UMillimeters;
-    use crate::units::*;
     use fixed::types::extra::U20;
     use fixed::{FixedI64, FixedU32};
+    use units::UMillimeters;
     // Wide fixed-point type for intermediate products that would overflow INum.
     type Wide = FixedI64<U20>;
     use hegel::generators as gs;
@@ -653,7 +648,8 @@ mod tests {
                     / Wide::from_num(dist))
                 .abs();
                 assert!(
-                    accel * Wide::from_num(10_u32) <= Wide::from_num(max_accel.0) * Wide::from_num(11_u32),
+                    accel * Wide::from_num(10_u32)
+                        <= Wide::from_num(max_accel.0) * Wide::from_num(11_u32),
                     "acceleration {accel} exceeds max_accel {}",
                     max_accel.0
                 );
@@ -706,7 +702,8 @@ mod tests {
                         / Wide::from_num(dist))
                     .abs();
                     assert!(
-                        accel * Wide::from_num(10_u32) <= Wide::from_num(max_accel.0) * Wide::from_num(11_u32),
+                        accel * Wide::from_num(10_u32)
+                            <= Wide::from_num(max_accel.0) * Wide::from_num(11_u32),
                         "acceleration {accel} exceeds max_accel {}",
                         max_accel.0
                     );

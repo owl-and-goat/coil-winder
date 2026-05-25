@@ -4,8 +4,8 @@
 mod ast;
 mod parser;
 
-pub use ast::{Command, DisplayCommand, UCoord, UPos};
-use nom::{Parser, character::streaming::newline, sequence::terminated};
+pub use ast::{Command, DisplayCommand, UPos};
+use nom::{character::streaming::newline, sequence::terminated, Parser};
 
 pub enum Error {
     ParseFailed,

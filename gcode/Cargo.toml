@@ -7,3 +7,6 @@ edition = "2024"
 fixed = "1.29.0"
 heapless = "0.9.1"
 nom = { version = "8.0.0", default-features = false }
+
+# local dependencies
+units = { path = "../units" }

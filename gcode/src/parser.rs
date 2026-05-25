@@ -4,7 +4,6 @@ use core::time::Duration;
 
 use heapless::Vec;
 use nom::{
-    AsChar, IResult, Parser,
     branch::alt,
     bytes::complete::{tag, take_till, take_while1},
     character::complete::{char, multispace1},
@@ -13,9 +12,11 @@ use nom::{
     multi::fold_many1,
     number::complete::recognize_float,
     sequence::preceded,
+    AsChar, IResult, Parser,
 };
+use units::UNum;
 
-use crate::ast::{Command, UCoord, UPos};
+use crate::ast::{Command, UPos};
 
 pub fn comment(i: &[u8]) -> IResult<&[u8], ()> {
     let (mut i, _) = char('(')(i)?;
@@ -35,13 +36,13 @@ pub fn whitespace0(i: &[u8]) -> IResult<&[u8], ()> {
     opt(whitespace1).map(|_| ()).parse(i)
 }
 
-pub fn ucoord(i: &[u8]) -> IResult<&[u8], UCoord> {
+pub fn ucoord(i: &[u8]) -> IResult<&[u8], UNum> {
     let (i, txt) = recognize_float(i)?;
-    let num = UCoord::from_ascii(txt).unwrap();
+    let num = UNum::from_ascii(txt).unwrap();
     Ok((i, num))
 }
 
-pub fn labeled_ucoord(label: char) -> impl Fn(&[u8]) -> IResult<&[u8], UCoord> {
+pub fn labeled_ucoord(label: char) -> impl Fn(&[u8]) -> IResult<&[u8], UNum> {
     move |i| {
         let (i, _) = char(label)(i)?;
         ucoord(i)

@@ -8,7 +8,8 @@ use embassy_sync::{
 use embassy_time::{Instant, Timer};
 use fixed::{FixedI32, types::extra::U10};
 use fixed_sqrt::FastSqrt;
-use gcode::{Command, UCoord};
+use gcode::Command;
+use units::UNum;
 
 use crate::{
     CANCEL_WATCHERS, COMMAND_BUFFER_SIZE, CommandId, cancellation,
@@ -51,7 +52,7 @@ pub struct Axis {
     pub length: ICoord,
 }
 
-fn diff(coord1: UCoord, coord2: UCoord) -> ICoord {
+fn diff(coord1: UNum, coord2: UNum) -> ICoord {
     if coord1 > coord2 {
         (coord1 - coord2).saturating_cast()
     } else {
@@ -61,7 +62,7 @@ fn diff(coord1: UCoord, coord2: UCoord) -> ICoord {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
-struct MillimetersPerSecond(pub UCoord);
+struct MillimetersPerSecond(pub UNum);
 
 impl Format for MillimetersPerSecond {
     fn format(&self, fmt: defmt::Formatter) {
@@ -74,13 +75,13 @@ impl MillimetersPerSecond {
         self,
         MicronsPerStep(microns_per_step): MicronsPerStep,
     ) -> StepsPerSecond {
-        let microns = self.0 * UCoord::from_num(1000);
+        let microns = self.0 * UNum::from_num(1000);
         let steps = microns / microns_per_step.unsigned_abs();
         StepsPerSecond(steps.saturating_cast())
     }
 }
 
-const DEFAULT_HOME_SPEED: MillimetersPerSecond = MillimetersPerSecond(UCoord::lit("120"));
+const DEFAULT_HOME_SPEED: MillimetersPerSecond = MillimetersPerSecond(UNum::lit("120"));
 
 const AXES: usize = 3;
 
@@ -88,7 +89,7 @@ pub struct State {
     is_homed: bool,
     /// Feedrate is always in terms of the C axis
     feedrate: MillimetersPerSecond,
-    position: [UCoord; AXES],
+    position: [UNum; AXES],
     axes: [Axis; AXES],
     resume_button: gpio::Input<'static>,
     status_leds: &'static status_leds::Control,
@@ -103,8 +104,8 @@ impl State {
     ) -> Self {
         Self {
             is_homed: false,
-            feedrate: MillimetersPerSecond(UCoord::lit("1")),
-            position: [UCoord::ZERO; AXES],
+            feedrate: MillimetersPerSecond(UNum::lit("1")),
+            position: [UNum::ZERO; AXES],
             axes,
             resume_button,
             status_leds,
@@ -191,7 +192,7 @@ impl State {
                     // anymore
                     self.is_homed = false;
                     for coord in self.position.each_mut() {
-                        *coord = UCoord::ZERO;
+                        *coord = UNum::ZERO;
                     }
                 }
                 Command::Home { f: speed } => {
@@ -217,7 +218,7 @@ impl State {
                         Ok(()) => {
                             self.is_homed = true;
                             for coord in self.position.each_mut() {
-                                *coord = UCoord::ZERO;
+                                *coord = UNum::ZERO;
                             }
                         }
                         Err(HomeError { x_failed, z_failed }) => {
@@ -294,12 +295,12 @@ impl State {
                             let x_fr = {
                                 let z_over_x = dist[1].unsigned_abs() / dist[0].unsigned_abs();
                                 self.feedrate.0
-                                    / (z_over_x * z_over_x + UCoord::from_num(1)).fast_sqrt()
+                                    / (z_over_x * z_over_x + UNum::from_num(1)).fast_sqrt()
                             };
                             let z_fr = {
                                 let x_over_z = dist[0].unsigned_abs() / dist[1].unsigned_abs();
                                 self.feedrate.0
-                                    / (x_over_z * x_over_z + UCoord::from_num(1)).fast_sqrt()
+                                    / (x_over_z * x_over_z + UNum::from_num(1)).fast_sqrt()
                             };
                             [
                                 MillimetersPerSecond(x_fr)
@@ -314,14 +315,14 @@ impl State {
                             .feedrate
                             .to_steps_per_second(self.axes[2].microns_per_step);
                         let dur_s =
-                            UCoord::from_num(steps[2].unsigned_abs()) / UCoord::from_num(c_speed.0);
+                            UNum::from_num(steps[2].unsigned_abs()) / UNum::from_num(c_speed.0);
                         [
                             StepsPerSecond(
-                                (UCoord::from_num(steps[0].unsigned_abs()) / dur_s)
+                                (UNum::from_num(steps[0].unsigned_abs()) / dur_s)
                                     .saturating_to_num(),
                             ),
                             StepsPerSecond(
-                                (UCoord::from_num(steps[1].unsigned_abs()) / dur_s)
+                                (UNum::from_num(steps[1].unsigned_abs()) / dur_s)
                                     .saturating_to_num(),
                             ),
                             c_speed,
@@ -362,8 +363,8 @@ mod tests {
 
     #[test]
     fn four_minus_five() {
-        let four = UCoord::from_str("4").unwrap();
-        let five = UCoord::from_str("4").unwrap();
+        let four = UNum::from_str("4").unwrap();
+        let five = UNum::from_str("4").unwrap();
         let res = diff(four, five);
         assert_eq!(res, ICoord::from_str("-1").unwrap());
     }

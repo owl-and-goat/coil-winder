@@ -53,6 +53,7 @@ fixed-sqrt = "0.3.0"
 
 # Local dependencies
 gcode = { path = "../gcode" }
+units = { path = "../units" }
 
 [profile.release]
 debug = 2
