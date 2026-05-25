@@ -22,6 +22,20 @@
 (defn disable-all-steppers [] [:M18])
 (defn get-current-position [] [:M114])
 (defn pause [] [:M226])
+(defn dwell [dur]
+  (let [[seconds millis] (map (or dur {}) [:seconds :millis])
+        dur-gcode (cond
+                    (and seconds millis)
+                    (throw (ex-info "Cannot pass both :seconds and :millis" {:dur dur}))
+
+                    seconds [:S seconds]
+                    millis [:P millis])]
+    [:G4 dur-gcode]))
+
+(comment
+  (gcode-cmd->str (dwell {:seconds 12}))
+  (gcode-cmd->str (dwell {:millis 12}))
+  )
 
 (defn gcode-atom->str [elt]
   (cond

@@ -16,6 +16,8 @@ We've been using https://reprap.org/wiki/G-code for inspiration.
 
 + *G4 <dur>* - Dwell (sleep)
 
+  ~<dur>~ is either ~S<seconds>~ or ~P<millis>~
+
 + *G28 [F<speed>]* - Home
 
   *F* is optional feedrate, in millimeters per second. Defaults to 120

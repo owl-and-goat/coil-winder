@@ -2,7 +2,8 @@
   (:require [slicer :refer [gcode-cmd->str
                             rapid-move
                             home
-                            stop]]
+                            stop
+                            dwell]]
             [clojure.test :refer [deftest are]]))
 
 (deftest gcode-cmd->str-test
@@ -11,4 +12,6 @@
     (rapid-move {:X 20 :C 10 :Z 40} :feedrate 20) "G0 X20 Z40 C10 F20"
     (rapid-move {:Z 12 :C 10} :feedrate 10) "G0 Z12 C10 F10"
     (home) "G28"
-    (stop) "M0"))
+    (stop) "M0"
+    (dwell {:seconds 12}) "G4 S12"
+    (dwell {:millis 18}) "G4 P18"))
