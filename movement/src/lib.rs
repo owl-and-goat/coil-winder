@@ -382,7 +382,10 @@ mod tests {
     use super::*;
     use crate::units::UMillimeters;
     use crate::units::*;
-    use fixed::FixedU32;
+    use fixed::types::extra::U20;
+    use fixed::{FixedI64, FixedU32};
+    // Wide fixed-point type for intermediate products that would overflow INum.
+    type Wide = FixedI64<U20>;
     use hegel::generators as gs;
     use hegel::TestCase;
 
@@ -638,18 +641,21 @@ mod tests {
         let target = Coord(UMillimeters(UNum::from_bits(target_bits)));
         let max_accel = MillimetersPerSecondSquared(UNum::from_bits(accel_bits));
 
-        let max_accel_f = max_accel.0.to_num::<f32>();
-        let mut v = 0.0f32;
+        let mut v = INum::ZERO;
 
         for seg in Plan::new(start, MillimetersPerSecond(UNum::ZERO), target, max_accel) {
-            let speed = seg.speed.0.to_num::<f32>();
-            let dist = seg.dist.0.abs().to_num::<f32>();
-            let v_end = 2.0 * speed - v; // invert speed = (v_entry + v_exit)/2
-            if dist > 0.001 {
-                let accel = ((v_end - v) * speed / dist).abs();
+            let speed = seg.speed.0;
+            let dist = seg.dist.0.abs();
+            let v_end = INum::from_num(speed) * INum::from_num(2_u32) - v; // invert speed = (v_entry + v_exit)/2
+            if dist > INum::from_bits(1) {
+                // Intermediate product (mm/s)² needs Wide to avoid INum overflow.
+                let accel = (Wide::from_num(v_end - v) * Wide::from_num(speed)
+                    / Wide::from_num(dist))
+                .abs();
                 assert!(
-                    accel <= max_accel_f * 1.1,
-                    "acceleration {accel} exceeds max_accel {max_accel_f}"
+                    accel * Wide::from_num(10_u32) <= Wide::from_num(max_accel.0) * Wide::from_num(11_u32),
+                    "acceleration {accel} exceeds max_accel {}",
+                    max_accel.0
                 );
             }
             v = v_end;
@@ -676,8 +682,6 @@ mod tests {
         let directions = tc.draw(gs::vecs(gs::booleans()).min_size(2));
 
         let max_accel = MillimetersPerSecondSquared(UNum::from_bits(accel_bits));
-        let max_accel_f = max_accel.0.to_num::<f32>();
-
         let mut pos = start_bits as i64;
         let mut targets = magnitudes.into_iter().zip(directions).map(|(mag, dir)| {
             let offset = if dir { mag as i64 } else { -(mag as i64) };
@@ -690,18 +694,21 @@ mod tests {
 
         plan.add_target(targets.next().unwrap()).unwrap();
 
-        let mut v = 0.0f32;
+        let mut v = INum::ZERO;
         for target in targets {
             plan.add_target(target).unwrap();
             for seg in &mut plan {
-                let speed = seg.speed.0.to_num::<f32>();
-                let dist = seg.dist.0.abs().to_num::<f32>();
-                let v_end = 2.0 * speed - v; // invert speed = (v_entry + v_exit)/2
-                if dist > 0.001 {
-                    let accel = ((v_end - v) * speed / dist).abs();
+                let speed = seg.speed.0;
+                let dist = seg.dist.0.abs();
+                let v_end = INum::from_num(speed) * INum::from_num(2_u32) - v; // invert speed = (v_entry + v_exit)/2
+                if dist > INum::from_bits(1) {
+                    let accel = (Wide::from_num(v_end - v) * Wide::from_num(speed)
+                        / Wide::from_num(dist))
+                    .abs();
                     assert!(
-                        accel <= max_accel_f * 1.1,
-                        "acceleration {accel} exceeds max_accel {max_accel_f}"
+                        accel * Wide::from_num(10_u32) <= Wide::from_num(max_accel.0) * Wide::from_num(11_u32),
+                        "acceleration {accel} exceeds max_accel {}",
+                        max_accel.0
                     );
                 }
                 v = v_end;
@@ -727,14 +734,14 @@ mod tests {
         let mut plan = StreamingPlan::new(start, max_accel);
         plan.add_target(target).unwrap();
 
-        let mut v = 0.0f32;
+        let mut v = INum::ZERO;
         for seg in &mut plan {
-            let speed = seg.speed.0.to_num::<f32>();
-            v = 2.0 * speed - v;
+            v = INum::from_num(seg.speed.0) * INum::from_num(2_u32) - v; // invert speed = (v_entry + v_exit)/2
         }
 
+        // Division-by-2 in the decel segment truncates, introducing at most 2 ULPs of error.
         assert!(
-            v.abs() < 0.001,
+            v.abs() <= INum::from_bits(2),
             "final velocity should be ~0, got {v} (target_bits={target_bits}, accel_bits={accel_bits})"
         );
     }
