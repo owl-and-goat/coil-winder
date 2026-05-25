@@ -15,6 +15,9 @@ mkShell {
 
     # Slicer
     clojure
+
+    # hegel :(
+    uv
   ];
   PROBE_RS_CHIP = "rp2040";
 }
